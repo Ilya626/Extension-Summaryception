@@ -189,6 +189,10 @@
 .sc-source-list { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; font: inherit; }
 .sc-snippet-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sc-snippet-actions .menu_button { margin: 0; }
+.sc-request-status { padding: 8px; margin-bottom: 8px; border: 1px solid currentColor; border-radius: 4px; overflow-wrap: anywhere; }
+.sc-request-status:empty { display: none; }
+.sc-request-status[data-state="error"] { color: #ff8f8f; }
+.sc-request-status[data-state="warning"] { color: #e6bd76; }
 
 .sc-snippet-delete {
     flex-shrink: 0;

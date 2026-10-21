@@ -116,6 +116,7 @@
 
             <!-- ═══ Snippet Browser ═══ -->
             <h4 class="sc-section-title">🗂️ Snippet Browser</h4>
+            <div id="sc_request_status" class="sc-request-status" role="status" aria-live="polite"></div>
             <div id="sc_snippet_browser" class="sc-snippet-browser"></div>
 
             <hr class="sc-divider" />
@@ -289,8 +290,8 @@
                                     Works with LM Studio, KoboldCPP, vLLM, text-generation-webui, OpenRouter, or any
                                     OpenAI-compatible endpoint. Enter the base URL up to <code>/v1</code>
                                     (e.g. <code>http://localhost:1234/v1</code>).
-                                    Local endpoints require <code>enableCorsProxy: true</code> in <code>config.yaml</code>.
-                                    Cloud APIs (OpenRouter, etc.) work without the proxy.
+                                    Requests use SillyTavern's native server backend. Browser CORS support and
+                                    <code>enableCorsProxy</code> are not required. Uses the URL, key and model entered here.
                                 </small>
                             </div>
                         </div>

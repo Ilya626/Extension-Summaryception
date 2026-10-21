@@ -5,9 +5,9 @@
  *   - default:  SillyTavern's generateRaw() (active connection)
  *   - profile:  ST Connection Profile via ConnectionManagerRequestService
  *   - ollama:   Ollama instance (via ST CORS proxy to avoid browser CORS issues)
- *   - openai:   OpenAI-compatible endpoint (via ST CORS proxy, streaming supported)
+ *   - openai:   OpenAI-compatible endpoint via ST's native server backend
  *
- * CORS Note: Ollama and OpenAI modes route through ST's /cors/ proxy endpoint
+ * CORS Note: Ollama mode routes through ST's /proxy/ endpoint
  * to avoid browser CORS restrictions. Requires enableCorsProxy: true in config.yaml
  * OR the target server must have permissive CORS headers.
  *
@@ -400,8 +400,8 @@ export async function fetchOllamaModels(url) {
  * Streaming avoids the non-streaming token ceiling (4096 on many providers)
  * and allows reasoning models to complete their full thinking + output.
  *
- * Routes through ST's CORS proxy for local endpoints.
- * Cloud endpoints skip the proxy since they have CORS headers.
+ * Uses ST's native Custom OpenAI backend for every endpoint. Providers do not
+ * need browser CORS support and credentials stay off cross-origin requests.
  */
 async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal) {
     signal?.throwIfAborted();
@@ -431,16 +431,6 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     }
 
 
-    // Decide whether to use CORS proxy
-    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?/i.test(endpoint);
-
-    const headers = {
-        'Content-Type': 'application/json',
-    };
-    if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-
     // Use maxTokens from settings, default to 0 (no limit / provider default)
     const tokenLimit = maxTokens && maxTokens > 0 ? maxTokens : undefined;
 
@@ -453,6 +443,12 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         temperature: LLM_DEFAULTS.openaiTemperature,
         stream: true,
         stream_options: { include_usage: true },
+        chat_completion_source: 'custom',
+        custom_url: endpoint.replace(/\/chat\/completions$/, ''),
+        // Native Custom headers override ST's saved Custom API key; this
+        // separate connection must use its own explicit key, including blank.
+        custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
+        custom_include_body: JSON.stringify({ stream_options: { include_usage: true } }),
     };
 
     // Only include max_tokens if explicitly set
@@ -463,49 +459,16 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     const body = JSON.stringify(requestBody);
 
     let response;
-    if (isLocal) {
-        try {
-            response = await fetch(proxiedUrl(endpoint), {
-                signal,
-                method: 'POST',
-                headers: { ...getProxyHeaders(), ...headers },
-                                   body: body,
-            });
-        } catch (proxyError) {
-            if (signal?.aborted) throw proxyError;
-            console.warn(`${MODULE_NAME} CORS proxy failed for OpenAI endpoint, trying direct:`, proxyError.message);
-            try {
-                response = await fetch(endpoint, {
-                    signal,
-                    method: 'POST',
-                    headers: headers,
-                    body: body,
-                });
-            } catch (directError) {
-                if (signal?.aborted) throw directError;
-                throw new ConnectionError(
-                    `Failed to connect to ${baseUrl}. ` +
-                    `Enable the CORS proxy in config.yaml (enableCorsProxy: true). ` +
-                    `Proxy error: ${proxyError.message}. Direct error: ${directError.message}`,
-                    { retryable: true }
-                );
-            }
-        }
-    } else {
-        try {
-            response = await fetch(endpoint, {
-                signal,
-                method: 'POST',
-                headers: headers,
-                body: body,
-            });
-        } catch (directError) {
-            if (signal?.aborted) throw directError;
-            throw new ConnectionError(
-                `Failed to connect to ${baseUrl}: ${directError.message}`,
-                { retryable: true }
-            );
-        }
+    try {
+        response = await fetch('/api/backends/chat-completions/generate', {
+            signal,
+            method: 'POST',
+            headers: getProxyHeaders(),
+            body,
+        });
+    } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new ConnectionError(`Could not reach the SillyTavern backend: ${error.message}`, { retryable: true });
     }
 
     if (!response.ok) {

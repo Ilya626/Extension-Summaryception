@@ -1,6 +1,14 @@
-# Local version 5.5.4-local.10
+# Local version 5.5.4-local.11
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.11 OpenAI Compatible server transport
+
+OpenAI Compatible no longer sends cloud requests directly from the browser or relies on the optional CORS proxy for local addresses. All requests go through ST's native `/api/backends/chat-completions/generate` Custom backend with this connection's explicit URL, model and key. Streaming, provider usage, cancellation and response limits are preserved. A blank key does not inherit the main Custom API secret.
+
+This fixes providers that reject browser CORS preflights: the previous request never reached ST and repeated without a useful terminal log. Verified using mobile Edge, a real local provider with no CORS headers, and native ST with `enableCorsProxy: false`; direct browser fetch failed, while Regenerate and Force succeeded through ST with the correct key/model and 22 saved output tokens. No browser request interception was used for this check. Stop aborted a delayed request and unlocked deletion; a provider authentication failure retained memory and showed its actual error. All 57 existing tests pass.
+
+The UI now shows the running script version and persistent request stage/error above Snippet Browser. Final errors retain the underlying diagnosis instead of only reporting five exhausted retries. Stop no longer announces that work has finished while an asynchronous step is still active.
 
 ## local.10 mobile Regenerate and Refine
 

@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.10 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.11 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -24,6 +24,7 @@ import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
+const RUNTIME_VERSION = '5.5.4-local.11';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -587,9 +588,16 @@ let currentAbortController = null;
 let summarizationStopRequested = false;
 let cancelCatchupDialog = null;
 let isChatGenerating = () => false;
+let summaryStatus = { message: 'Ready', state: 'idle' };
+
+function setSummaryStatus(message, state = 'working') {
+    summaryStatus = { message, state };
+    $('#sc_request_status').text(message).attr('data-state', state);
+}
 
 function abortSummarization() {
     summarizationStopRequested = true;
+    if (isSummarizing) setSummaryStatus(`Stop requested. Waiting for the active step: ${summaryStatus.message}`, 'warning');
     cancelCatchupDialog?.();
     if (currentAbortController) {
         currentAbortController.abort();
@@ -637,10 +645,12 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
     try {
         if (s.summarizerWorldInfo) {
             try {
+                setSummaryStatus('Scanning World Info. The model request has not been sent yet.');
                 const worldInfo = await collectSummaryWorldInfo(storyTxt, [contextStr, existingSummary].filter(Boolean).join('\n'));
                 prompt = attachSummaryWorldInfo(prompt, worldInfo);
                 log('Summary World Info:', worldInfo.length, 'chars');
             } catch (error) {
+                setSummaryStatus(`World Info scan failed: ${error.message}`, 'error');
                 console.error(LOG_PREFIX, 'World Info scan failed:', error);
                 toastr.warning(`Summary skipped: World Info scan failed (${error.message}). Memory and message context were kept.`, 'Summaryception', { timeOut: TUNING.toastError });
                 return '';
@@ -650,6 +660,7 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
             trace(`  Attempt ${attempt} starting...`);
 
             if (signal.aborted) {
+                setSummaryStatus('Stopped. No summary result was applied.', 'idle');
                 log('Summarization aborted by user.');
                 toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
                 return '';
@@ -670,6 +681,7 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
                 let onAbort;
                 let result;
                 const requestController = new AbortController();
+                setSummaryStatus(`Waiting for ${getConnectionDisplayName(s)}. Attempt ${attempt + 1}/${RETRY_CONFIG.maxRetries + 1}; timeout ${TUNING.llmRequestTimeout / 1000}s.`);
                 const cancelRequest = () => requestController.abort();
                 signal.addEventListener('abort', cancelRequest, { once: true });
                 try {
@@ -699,12 +711,14 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
 
                 log('Result:', trimmed);
                 trace('<<< EXITING callSummarizer WITH SUCCESS');
+                setSummaryStatus('Response received. Counting summary output tokens.');
                 const summary = await countOnce({ ...result, text: trimmed });
                 return signal.aborted ? '' : summary;
 
             } catch (err) {
                 lastError = err;
                 if (err instanceof InvalidModelOutputError) {
+                    setSummaryStatus(`Summary rejected: ${err.message}`, 'error');
                     toastr.warning(`Summary rejected: ${err.message}. Memory and message context were kept.`, 'Summaryception', { timeOut: TUNING.toastError });
                     return '';
                 }
@@ -715,6 +729,7 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
                 });
 
                 if (signal.aborted || err.message === 'Aborted by user') {
+                    setSummaryStatus('Stopped. No summary result was applied.', 'idle');
                     log('Summarization aborted by user.');
                     toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
                     return '';
@@ -744,6 +759,7 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
                 }
 
                 const delaySec = (delay / 1000).toFixed(1);
+                setSummaryStatus(`${err.message}. Retrying in ${delaySec}s.`, 'warning');
                 const status = err?.status || err?.response?.status || '?';
 
                 console.warn(LOG_PREFIX, `Attempt ${attempt + 1} failed (${status}). Retrying in ${delaySec}s...`, err.message || err);
@@ -765,9 +781,11 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
         }
 
         const status = lastError?.status || lastError?.response?.status || '';
+        const failureMessage = `Summary request failed${status ? ` (${status})` : ''}: ${lastError?.message || String(lastError)}`;
+        setSummaryStatus(failureMessage, 'error');
         console.error(LOG_PREFIX, 'Summarization failed after all retries:', lastError);
         toastr.error(
-            `Summarization failed after ${RETRY_CONFIG.maxRetries} retries${status ? ` (${status})` : ''}. Batch skipped — will retry on next trigger.`,
+            `${failureMessage}. Memory was kept.`,
             'Summaryception',
             { timeOut: TUNING.toastError }
         );
@@ -794,6 +812,7 @@ async function maybeSummarizeTurns() {
     summarizationStopRequested = false;
     let repeat = false;
     try {
+        setSummaryStatus('Preparing message context and counting source tokens.');
         syncContextOverrides(chat);
         await protectBlindZone(chat);
         const plan = await planRawContext(chat, store, settings);
@@ -836,6 +855,7 @@ async function summarizeOneBatchFromTurns() {
     const settings = getSettings();
     const { chat } = SillyTavern.getContext();
     const store = getChatStore();
+    setSummaryStatus('Preparing message context and counting source tokens.');
     syncContextOverrides(chat);
     await protectBlindZone(chat);
     const plan = await planRawContext(chat, store, settings);
@@ -860,6 +880,7 @@ async function summarizeOneBatchFromTurns() {
         store.layers[0] ??= [];
         const snippet = { ...summary, ...newSnippetSources(passage), turnRange: [startIndex, endIndex], timestamp: Date.now() };
         store.layers[0].push(snippet);
+        setSummaryStatus('Saving the summary and updating message context.');
         archiveL0(store, snippet);
         updateSourceBoundary(store, chat);
         await saveChatStore();
@@ -867,6 +888,7 @@ async function summarizeOneBatchFromTurns() {
         await SillyTavern.getContext().saveChat();
         updateInjection();
         if (!await maybePromoteLayer()) return 'saved-promotion-stopped';
+        setSummaryStatus('Summary saved.', 'success');
         updateInjection();
         return true;
     } catch (error) {
@@ -1376,15 +1398,21 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
     }
     const store = getChatStore();
     const snippet = store.layers[layerIndex]?.[snippetIndex];
-    if (!snippet) return false;
+    if (!snippet) {
+        setSummaryStatus('The selected summary is no longer present. Refresh the snippet browser.', 'error');
+        return false;
+    }
+    setSummaryStatus(`${refine ? 'Refine' : 'Regenerate'}: checking source messages.`);
     const { chat } = SillyTavern.getContext();
     const sources = resolveSnippetSources(snippet, chat);
     if (!sources.known || sources.missing || !sources.text.trim()) {
+        setSummaryStatus('Cannot rewrite: source messages are missing or were never recorded.', 'error');
         toastr.warning('Source messages are missing or were never recorded. Check the sources; a numeric range will not be substituted.', 'Summaryception');
         return false;
     }
     const issue = sources.indices.some(index => !chat[index].is_user && getModelOutputIssue(chat[index].mes, chat[index]));
     if (issue) {
+        setSummaryStatus('Cannot rewrite: a linked assistant message is empty or a refusal.', 'error');
         toastr.warning('A linked assistant message is now empty or a refusal. Summary kept.', 'Summaryception');
         return false;
     }
@@ -1415,6 +1443,7 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
             return false;
         }
         Object.assign(snippet, result, { sourceStatus: 'exact', timestamp: Date.now(), [refine ? 'refined' : 'regenerated']: true });
+        setSummaryStatus('Saving the revised summary.');
         if (layerIndex === 0) archiveL0(store, snippet);
         else preserveSourceRevision(snippet);
         await saveChatStore();
@@ -1424,6 +1453,7 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
         updateUI();
         if (transferred) toastr.success(refine ? 'Summary refined' : 'Summary regenerated', 'Summaryception');
         else toastr.warning('Revised summary saved. Layer transfer stopped.', 'Summaryception');
+        setSummaryStatus(transferred ? (refine ? 'Summary refined.' : 'Summary regenerated.') : 'Revised summary saved. Layer transfer stopped.', transferred ? 'success' : 'warning');
         return true;
     } finally {
         isSummarizing = false;
@@ -1601,9 +1631,11 @@ function updateSnippetBrowser() {
         const refine = $(this).hasClass('sc-snippet-refine');
         $(this).prop('disabled', true);
         try {
+            if (!isSummarizing) setSummaryStatus('Saving any pending edit before rewriting.');
             if (!await (finishActiveEdit ? finishActiveEdit() : pendingEdit)) return;
             await rewriteSnippet(Number(parent.data('layer')), Number(parent.data('idx')), refine);
         } catch (error) {
+            setSummaryStatus(`Summary rewrite failed: ${error.message}`, 'error');
             console.error(LOG_PREFIX, 'Summary rewrite failed:', error);
             toastr.error(`Could not ${refine ? 'refine' : 'regenerate'} summary: ${error.message}`, 'Summaryception');
         } finally {
@@ -1838,12 +1870,14 @@ function bindUIEvents() {
         summarizationStopRequested = false;
         try {
             catchupDismissed = false;
+            setSummaryStatus('Preparing message context and counting source tokens.');
 
             const { chat } = SillyTavern.getContext();
             await protectBlindZone(chat);
             const plan = await planRawContext(chat, getChatStore(), s);
             if (summarizationStopRequested) return;
             if (!plan.hasBatch) {
+                setSummaryStatus('Nothing to summarize outside the retained context and blind zone.', 'idle');
                 toastr.info('Nothing to summarize outside the retained token budget and blind zone.', 'Summaryception');
                 return;
             }
@@ -1864,7 +1898,7 @@ function bindUIEvents() {
             return;
         }
         abortSummarization();
-        toastr.warning('Summarization stopped. Progress has been saved.', 'Summaryception', { timeOut: TUNING.toastLong });
+        toastr.warning('Stop requested. Waiting for the active step to finish.', 'Summaryception', { timeOut: TUNING.toastLong });
         $(this).prop('disabled', true);
         setTimeout(() => $(this).prop('disabled', false), TUNING.stopButtonCooldown);
         updateUI();
@@ -2408,6 +2442,8 @@ function showConnectionStatus(type, message) {
         {}
     );
     $('#extensions_settings2').append(html);
+    $('.sc-settings > .inline-drawer > .inline-drawer-toggle > b').text(`🧠 Summaryception · ${RUNTIME_VERSION}`);
+    setSummaryStatus(`Ready · ${RUNTIME_VERSION}`, 'idle');
 
     bindUIEvents();
     initConnectionUI();
@@ -2431,6 +2467,6 @@ function showConnectionStatus(type, message) {
         syncContextOverrides(SillyTavern.getContext().chat);
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.5.4-local.10 loaded. Raw context token budgets and protected blind zone available');
+        console.log(LOG_PREFIX, `${RUNTIME_VERSION} loaded. Raw context token budgets and protected blind zone available`);
     });
 })();

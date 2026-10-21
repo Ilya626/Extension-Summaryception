@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.10**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.11**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
@@ -67,10 +67,13 @@ Manual edits, Regenerate and Refine in deeper layers replace the compression sou
 
 - **Default (Main API)** uses ST's native raw-generation API.
 - **Connection Profile** uses ST's native profile service, including its saved endpoint, model, key, preset and instruct formatting. Response Length = 0 inherits the preset.
-- **Ollama** and **OpenAI Compatible** offer separate endpoints. Local requests use ST's CORS proxy where required.
+- **OpenAI Compatible** uses its configured URL, key and model through ST's native Custom backend. Browser CORS and `enableCorsProxy` are not required; ST's main connection/settings are not changed.
+- **Ollama** offers a separate endpoint using ST's optional CORS proxy.
 - **Summary Language** selects the output language for new summaries, transitions, regeneration and Refine. Auto adds no language requirement. Custom prompts are preserved.
 
 The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion and all insertion positions. Temporary scan state is restored afterward.
+
+The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting/retries, saving and the actual failure message. Stop reports a cancellation request while the active step finishes; it does not claim completion prematurely.
 
 ## Source messages and visibility
 
