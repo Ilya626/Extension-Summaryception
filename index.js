@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.14 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.15 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -24,7 +24,7 @@ import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.14';
+const RUNTIME_VERSION = '5.5.4-local.15';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -158,7 +158,8 @@ const defaultSettings = Object.freeze({
 
     // ─── Connection Settings ─────────────────────────────────────
     connectionSource: 'default',          // 'default' | 'profile' | 'ollama' | 'openai'
-    summarizerResponseLength: 0,          // 0 = use preset default; set lower if you get "max_tokens > 4096 must have stream=true" errors
+    summarizerStreaming: false,          // One request mode for every connection and summary operation.
+    summarizerResponseLength: 0,          // 0 = use preset default.
     connectionProfileId: '',              // ID of selected ST Connection Profile
     ollamaUrl: 'http://localhost:11434',
     ollamaModel: '',
@@ -545,7 +546,7 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
         }
         signal.throwIfAborted();
         phase = 'Summary request';
-        setSummaryStatus(`Waiting for ${getConnectionDisplayName(s)}. Timeout: 120s without response data.`);
+        setSummaryStatus(`Waiting for ${getConnectionDisplayName(s)}. ${s.summarizerStreaming ? 'Streaming' : 'Regular'} request. Timeout: 120s without response data.`);
         onActivity();
         const result = await waitForRequest(sendSummarizerRequest(s, systemPrompt, prompt, { signal, returnDetails: true, onActivity }), signal);
         clearTimeout(idleTimer);
@@ -1168,6 +1169,7 @@ function updateUI({ refreshSnippets = true } = {}) {
         $('#sc_trace_mode').prop('checked', s.traceMode);
         $('#sc_strip_patterns').val((s.stripPatterns || []).join('\n'));
         $('#sc_summarizer_response_length').val(s.summarizerResponseLength || 0);
+        $('#summaryception_streaming').prop('checked', s.summarizerStreaming);
 
         const { chat } = SillyTavern.getContext();
         const hiddenCount = chat.filter(message => message.is_system && message.extra?.sc_context).length;
@@ -2027,6 +2029,7 @@ function bindUIEvents() {
         s.injectionTemplate = defaultSettings.injectionTemplate;
         s.stripPatterns = [...defaultSettings.stripPatterns];
         s.summarizerResponseLength = defaultSettings.summarizerResponseLength;
+        s.summarizerStreaming = defaultSettings.summarizerStreaming;
         s.summaryLanguage = defaultSettings.summaryLanguage;
         s.summaryCustomLanguage = defaultSettings.summaryCustomLanguage;
 
@@ -2051,6 +2054,13 @@ function bindUIEvents() {
 function initConnectionUI() {
     const s = () => getSettings();
     const save = () => saveSettings();
+
+    const streamingToggle = document.getElementById('summaryception_streaming');
+    streamingToggle.checked = s().summarizerStreaming;
+    streamingToggle.addEventListener('change', () => {
+        s().summarizerStreaming = streamingToggle.checked;
+        save();
+    });
 
     // ── Source dropdown ──
     const sourceSelect = document.getElementById('summaryception_connection_source');
@@ -2224,7 +2234,7 @@ async function testOpenAIConnectionHandler() {
 
     showConnectionStatus('loading', 'Testing connection...');
 
-    const result = await testOpenAIConnection(s.openaiUrl, s.openaiKey, s.openaiModel);
+    const result = await testOpenAIConnection(s.openaiUrl, s.openaiKey, s.openaiModel, s.summarizerStreaming);
 
     if (result.success) {
         showConnectionStatus('success', result.message);

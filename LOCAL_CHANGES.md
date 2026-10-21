@@ -1,6 +1,12 @@
-# Local version 5.5.4-local.14
+# Local version 5.5.4-local.15
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.15 shared streaming control
+
+Added one Streaming responses checkbox under Summarizer Connection. It defaults off and selects regular or streamed responses for all four connection sources and all summary operations, including Test Connection. OpenAI Compatible now supports regular JSON replies and omits streaming-only fields when streaming is off. Ollama supports both JSON and streamed NDJSON, retaining its final eval_count. Profiles receive ST's native stream option; Default uses native active-connection payload builders and streaming services without changing global settings. Native streamed results without exposed usage retain the marked token-estimate fallback. Horde remains regular because ST provides no streaming protocol for it.
+
+Verified so far through native ST and a real local provider: OpenAI Compatible in both modes; Default and Profile with Chat Completion and Text Completion in both modes; Ollama in both modes. All 57 existing tests pass. Remaining UI and operation checks continue after this publication; no new test cases were added.
 
 ## local.14 immediately before retained conversation
 

@@ -88,20 +88,21 @@ function getProxyHeaders() {
  */
 export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, { signal, returnDetails = false, onActivity } = {}) {
     const source = settings.connectionSource || 'default';
+    const streaming = settings.summarizerStreaming ?? (source === 'openai');
     let result;
     switch (source) {
         case 'profile':
-            result = await sendViaProfile(settings.connectionProfileId, systemPrompt, userPrompt, settings.summarizerResponseLength, signal);
+            result = await sendViaProfile(settings.connectionProfileId, systemPrompt, userPrompt, settings.summarizerResponseLength, signal, streaming, onActivity);
             break;
         case 'ollama':
-            result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal);
+            result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal, streaming, onActivity);
             break;
         case 'openai':
-            result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal, onActivity);
+            result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal, onActivity, streaming);
             break;
         case 'default':
         default:
-            result = await sendViaDefault(systemPrompt, userPrompt, settings.summarizerResponseLength, signal);
+            result = await sendViaDefault(systemPrompt, userPrompt, settings.summarizerResponseLength, signal, streaming, onActivity);
     }
     const details = typeof result === 'string' ? { text: result } : result;
     requireModelOutput(details.text);
@@ -113,7 +114,8 @@ export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, 
 /**
  * Uses ST's built-in generateRaw(), which routes through the active connection.
  */
-async function sendViaDefault(systemPrompt, userPrompt, responseLength, signal) {
+async function sendViaDefault(systemPrompt, userPrompt, responseLength, signal, streaming, onActivity) {
+    if (streaming) return sendViaDefaultStream(systemPrompt, userPrompt, responseLength, signal, onActivity);
     const { generateRaw, generateRawData, extractMessageFromData, eventSource, event_types } = SillyTavern.getContext();
     signal?.throwIfAborted();
     const onAbort = () => {
@@ -181,6 +183,86 @@ async function sendViaDefault(systemPrompt, userPrompt, responseLength, signal) 
     }
 }
 
+async function collectNativeStream(response, signal, onActivity) {
+    if (typeof response !== 'function') return response;
+    onActivity?.();
+    let text = '';
+    let usage = {};
+    for await (const chunk of response()) {
+        signal?.throwIfAborted();
+        onActivity?.();
+        if (hasProviderRefusal(chunk)) throw new InvalidModelOutputError('the provider reported a refusal or content filter');
+        if (typeof chunk.text === 'string') text = chunk.text;
+        usage = { ...usage, ...providerUsage(chunk) };
+    }
+    signal?.throwIfAborted();
+    return { content: requireModelOutput(text), ...usage };
+}
+
+async function sendViaDefaultStream(systemPrompt, userPrompt, responseLength, signal, onActivity) {
+    const ctx = SillyTavern.getContext();
+    const native = await import('/script.js');
+    const prompt = native.createRawPrompt(userPrompt, ctx.mainApi, false, false, systemPrompt, '');
+    let response;
+    if (ctx.mainApi === 'openai') {
+        const service = ctx.ChatCompletionService;
+        const { getChatCompletionModel } = await import('/scripts/openai.js');
+        const payload = await service.presetToGeneratePayload({}, {}, { messages: prompt, model: getChatCompletionModel() });
+        payload.stream = true;
+        if (responseLength > 0) {
+            if (Object.hasOwn(payload, 'max_completion_tokens')) payload.max_completion_tokens = Number(responseLength);
+            else payload.max_tokens = Number(responseLength);
+        }
+        response = await service.sendRequest(payload, false, signal);
+    } else if (ctx.mainApi === 'textgenerationwebui') {
+        const { getTextGenGenerationData } = await import('/scripts/textgen-settings.js');
+        const payload = await getTextGenGenerationData(prompt, responseLength > 0 ? Number(responseLength) : native.amount_gen, false, false, null, 'quiet');
+        payload.stream = true;
+        response = await ctx.TextCompletionService.sendRequest(payload, false, signal);
+    } else if (ctx.mainApi === 'kobold' || ctx.mainApi === 'novel') {
+        const length = responseLength > 0 ? Number(responseLength) : native.amount_gen;
+        let payload;
+        if (ctx.mainApi === 'kobold') {
+            const k = await import('/scripts/kai-settings.js');
+            const preset = k.koboldai_settings[k.koboldai_setting_names[k.kai_settings.preset_settings]] || {};
+            payload = k.getKoboldGenerationData(prompt, preset, length, native.max_context, false, 'quiet');
+        } else {
+            const n = await import('/scripts/nai-settings.js');
+            const preset = n.novelai_settings[n.novelai_setting_names[n.nai_settings.preset_settings_novel]] || {};
+            payload = n.getNovelGenerationData(prompt, preset, length, false, false, null, 'quiet');
+        }
+        payload.streaming = true;
+        const transport = await fetch(native.getGenerateUrl(ctx.mainApi), {
+            method: 'POST', headers: getProxyHeaders(), body: JSON.stringify(payload), signal,
+        });
+        if (!transport.ok) throw new ConnectionError(`Request failed (${transport.status}): ${await transport.text()}`);
+        const { default: EventSourceStream } = await import('/scripts/sse-stream.js');
+        const reader = transport.body.pipeThrough(new TransformStream({ transform(chunk, controller) {
+            onActivity?.(); controller.enqueue(chunk);
+        } })).pipeThrough(new EventSourceStream()).getReader();
+        response = async function* () {
+            let text = '';
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done || value.data === '[DONE]') return;
+                    const data = JSON.parse(value.data);
+                    if (data.error) throw new ConnectionError(data.error.message || String(data.error));
+                    text += data.token || '';
+                    yield { ...data, text };
+                }
+            } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+        };
+    } else {
+        // Horde's queued backend has no streaming protocol.
+        return sendViaDefault(systemPrompt, userPrompt, responseLength, signal, false, onActivity);
+    }
+    const result = await collectNativeStream(response, signal, onActivity);
+    const text = native.cleanUpMessage({ getMessage: result.content, isImpersonate: false, isContinue: false,
+        displayIncompleteSentences: true, includeUserPromptBias: false, trimNames: true, trimWrongNames: true });
+    return { ...result, text: requireModelOutput(text) };
+}
+
 /** Mirror ST TextCompletionService's output cleanup using the selected instruct preset. */
 async function cleanProfileText(text, profile) {
     const ctx = SillyTavern.getContext();
@@ -205,7 +287,7 @@ async function cleanProfileText(text, profile) {
 // ─── Mode 2: Connection Profile ──────────────────────────────────────
 
 /** Call ST's profile service without changing the active connection or its preset. */
-async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLength, signal) {
+async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLength, signal, streaming, onActivity) {
     if (!profileId) throw new ConnectionError('Select a Connection Profile in Summaryception settings.');
     const ctx = SillyTavern.getContext();
     const service = ctx.ConnectionManagerRequestService;
@@ -224,10 +306,15 @@ async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLengt
         // Native signature: profileId, messages, maxTokens, options.
         // undefined inherits the profile preset; native preset/instruct defaults stay on.
         const raw = await service.sendRequest(profileId, messages,
-            responseLength > 0 ? Number(responseLength) : undefined, { signal, extractData: false });
+            responseLength > 0 ? Number(responseLength) : undefined, { signal, extractData: false, stream: streaming });
+        const api = profile && service.validateProfile?.(profile)?.selected;
+        if (typeof raw === 'function') {
+            const result = await collectNativeStream(raw, signal, onActivity);
+            const text = api === 'textgenerationwebui' ? await cleanProfileText(result.content, profile) : result.content;
+            return { ...result, text: requireModelOutput(text) };
+        }
         if (hasProviderRefusal(raw)) throw new InvalidModelOutputError('the provider reported a refusal or content filter');
         const data = raw?.data ?? raw;
-        const api = profile && service.validateProfile?.(profile)?.selected;
         let result = typeof data === 'string' ? data
             : (Array.isArray(data?.content) ? data.content.filter(part => part.type === 'text').map(part => part.text).join('') : data?.content)
                 ?? data?.message?.content ?? data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
@@ -261,7 +348,7 @@ async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLengt
  * Send a request to a local Ollama instance using /api/chat.
  * Routes through ST's CORS proxy to avoid browser CORS restrictions.
  */
-async function sendViaOllama(url, model, systemPrompt, userPrompt, signal) {
+async function sendViaOllama(url, model, systemPrompt, userPrompt, signal, streaming, onActivity) {
     signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
@@ -294,7 +381,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt, signal) {
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt },
                 ],
-                stream: false,
+                stream: streaming,
                 options: {
                     temperature: LLM_DEFAULTS.ollamaTemperature,
                 },
@@ -314,7 +401,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt, signal) {
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: userPrompt },
                     ],
-                    stream: false,
+                    stream: streaming,
                     options: { temperature: LLM_DEFAULTS.ollamaTemperature },
                 }),
             });
@@ -337,6 +424,39 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt, signal) {
         );
     }
 
+    onActivity?.();
+    if (streaming && !response.headers.get('content-type')?.includes('application/json')) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '', text = '', last = {};
+        const readLine = line => {
+            if (!line.trim()) return;
+            const data = JSON.parse(line);
+            if (data.error) throw new ConnectionError(String(data.error));
+            if (hasProviderRefusal(data)) throw new InvalidModelOutputError('the provider reported a refusal or content filter');
+            text += data.message?.content || '';
+            last = data;
+        };
+        try {
+            while (!last.done) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                if (value?.byteLength) onActivity?.();
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) { readLine(line); if (last.done) break; }
+            }
+            buffer += decoder.decode();
+            if (!last.done && buffer.trim()) readLine(buffer);
+        } finally {
+            void reader.cancel().catch(() => {});
+            reader.releaseLock();
+        }
+        signal?.throwIfAborted();
+        if (!last.done) throw new ConnectionError('Ollama stream ended before generation completed. Summary not saved.');
+        return { text: requireModelOutput(text, last), ...providerUsage(last) };
+    }
     const data = await response.json();
 
     return { text: requireModelOutput(data?.message?.content ?? '', data), ...providerUsage(data) };
@@ -391,17 +511,15 @@ export async function fetchOllamaModels(url) {
     return data.models;
 }
 
-// ─── Mode 4: OpenAI Compatible (Streaming) ──────────────────────────
+// ─── Mode 4: OpenAI Compatible ─────────────────────────────────────
 
 /**
- * Send a request to any OpenAI-compatible endpoint using streaming.
- * Streaming avoids the non-streaming token ceiling (4096 on many providers)
- * and allows reasoning models to complete their full thinking + output.
+ * Send a streaming or regular request to an OpenAI-compatible endpoint.
  *
  * Uses ST's native Custom OpenAI backend for every endpoint. Providers do not
  * need browser CORS support and credentials stay off cross-origin requests.
  */
-async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal, onActivity) {
+async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal, onActivity, streaming = false) {
     signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
@@ -430,7 +548,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
 
 
     // Use maxTokens from settings, default to 0 (no limit / provider default)
-    const tokenLimit = maxTokens && maxTokens > 0 ? maxTokens : undefined;
+    const tokenLimit = Number(maxTokens) > 0 ? Number(maxTokens) : undefined;
 
     const requestBody = {
         model: model,
@@ -439,14 +557,13 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
             { role: 'user', content: userPrompt },
         ],
         temperature: LLM_DEFAULTS.openaiTemperature,
-        stream: true,
-        stream_options: { include_usage: true },
+        stream: streaming,
         chat_completion_source: 'custom',
         custom_url: endpoint.replace(/\/chat\/completions$/, ''),
         // Native Custom headers override ST's saved Custom API key; this
         // separate connection must use its own explicit key, including blank.
         custom_include_headers: JSON.stringify({ Authorization: apiKey ? `Bearer ${apiKey}` : '' }),
-        custom_include_body: JSON.stringify({ stream_options: { include_usage: true } }),
+        ...(streaming ? { stream_options: { include_usage: true }, custom_include_body: JSON.stringify({ stream_options: { include_usage: true } }) } : {}),
     };
 
     // Only include max_tokens if explicitly set
@@ -490,7 +607,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         );
     }
 
-    if (response.headers.get('content-type')?.includes('application/json')) {
+    if (!streaming || response.headers.get('content-type')?.includes('application/json')) {
         const data = await response.json();
         if (data.error) throw new ConnectionError(data.error.message || String(data.error));
         const text = data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
@@ -585,7 +702,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
  * @param {string} model
  * @returns {Promise<{success: boolean, message: string}>}
  */
-export async function testOpenAIConnection(url, apiKey, model) {
+export async function testOpenAIConnection(url, apiKey, model, streaming = false) {
     try {
         const result = await sendViaOpenAI(
             url,
@@ -593,7 +710,10 @@ export async function testOpenAIConnection(url, apiKey, model) {
             model || 'test',
             'You are a test assistant.',
             'Respond with exactly: CONNECTION_OK',
-            LLM_DEFAULTS.testMaxTokens
+            LLM_DEFAULTS.testMaxTokens,
+            undefined,
+            undefined,
+            streaming
         );
         return {
             success: true,

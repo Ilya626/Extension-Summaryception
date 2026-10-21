@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.14**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.15**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
@@ -74,6 +74,8 @@ Manual edits, Regenerate and Refine in deeper layers replace the compression sou
 The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion and all insertion positions. Temporary scan state is restored afterward.
 
 The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting, saving and the actual failure message. Each operation sends one request; errors are reported immediately without automatic retries. Stop cancels the active request; token planning checks cancellation between exchanges. Switching chats also cancels the old operation.
+
+**Advanced Settings > Summarizer Connection > Streaming responses** selects one response mode for Default, Connection Profile, OpenAI Compatible and Ollama. It applies to new summaries, Regenerate, Refine, layer transfers and Test Connection. Off is the default, including after upgrading a version without this control: wait for one complete response. On requests a stream. This changes only addon requests, leaving ST's chat-streaming settings and connection presets intact. The status line names the selected mode. Native ST streaming adapters may omit usage metadata; those results receive the existing marked token estimate. Horde has no streaming backend and continues to use regular responses.
 
 OpenAI streaming finishes at `[DONE]`, or once a final `finish_reason` and usage have arrived. It does not wait for the HTTP connection to close after completion. If usage is omitted after a final finish reason, a single two-second grace permits a trailing usage event; subsequent keepalives do not extend that grace. A stream cut off before a completion marker is rejected. The timeout is 120 seconds without incoming response data: it starts when the request is sent, resets when response headers arrive, then resets on every received stream chunk, including keepalives. An active stream has no total-duration limit.
 

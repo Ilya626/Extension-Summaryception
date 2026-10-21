@@ -189,10 +189,16 @@
                             to save costs while keeping your main API for RP.
                         </small>
 
+                        <label class="checkbox_label" for="summaryception_streaming">
+                            <input id="summaryception_streaming" type="checkbox" />
+                            <span>Streaming responses</span>
+                        </label>
+                        <small class="sc-hint">One mode for all connections, including Regenerate, Refine, layer transfers and Test Connection. Off: wait for one complete response. On: receive response chunks. Off by default.</small>
+
                         <div class="summaryception-setting-row">
                             <label for="sc_summarizer_response_length">
                                 <span>Summarizer Response Length</span>
-                                <small>Override max response tokens for summarizer calls (Default/Profile modes). 0 = use your preset's value. If you get "max_tokens > 4096 must have stream=true" errors, set to 4096. For reasoning models, ensure this is high enough for thinking + output.</small>
+                                <small>Override max response tokens for summarizer calls (Default/Profile modes). 0 = use your preset's value. Some APIs require streaming for larger limits. For reasoning models, allow enough tokens for thinking and output.</small>
                             </label>
                             <input id="sc_summarizer_response_length" type="number" class="text_pole" min="0" step="100" value="0" placeholder="0 = use preset default" />
                         </div>
