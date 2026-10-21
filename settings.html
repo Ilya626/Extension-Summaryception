@@ -19,16 +19,85 @@
                 <label class="checkbox_label" for="sc_pause_summarization">
                     <input type="checkbox" id="sc_pause_summarization" />
                     <span>Pause Summarization</span>
-                    <small class="sc-hint">Stop processing new turns while keeping existing summaries injected. Preserves prompt cache hits. Unpause or use Force Summarize to catch up.</small>
                 </label>
+                <small class="sc-hint">Stop processing new turns while keeping existing summaries injected. Preserves prompt cache hits. Unpause or use Force Summarize to catch up.</small>
             </div>
 
-            <!-- ═══ Stop hiding verbatim turns ═══ -->
-            <label class="checkbox_label" for="sc_disable_ghosting">
-                <input type="checkbox" id="sc_disable_ghosting" />
-                <span>Disable Message Hiding</span>
-                <small class="sc-hint">Messages will still be summarized and excluded from LLM context, but won't be visually hidden. Useful for compatibility with other extensions (QVink, MemoryBooks, etc.).</small>
+            <h4 class="sc-section-title">Summary Injection Position</h4>
+            <label for="sc_injection_position">Injection Position</label>
+            <select id="sc_injection_position" class="text_pole">
+                <option value="-1">None (not injected)</option>
+                <option value="2">Before Main Prompt / Story String</option>
+                <option value="0">After Main Prompt / Story String</option>
+                <option value="1">In-chat @ Depth</option>
+            </select>
+            <div class="sc-row">
+                <label for="sc_injection_depth">In-chat @ Depth</label>
+                <input id="sc_injection_depth" type="number" class="text_pole" min="0" max="9999" step="1" />
+                <small class="sc-hint">How many messages before the current end of the chat. 0 = after the last message.</small>
+                <label for="sc_injection_role">Role</label>
+                <select id="sc_injection_role" class="text_pole">
+                    <option value="0">System</option>
+                    <option value="1">User</option>
+                    <option value="2">Assistant</option>
+                </select>
+            </div>
+            <label class="checkbox_label" for="sc_injection_scan">
+                <input id="sc_injection_scan" type="checkbox" />
+                <span>Include in World Info Scanning</span>
             </label>
+
+            <h4 class="sc-section-title">Message Context (Ghosting)</h4>
+            <small class="sc-hint">Uses ST's native Exclude from prompts / Include in prompts controls (/hide and /unhide). Messages stay readable. Manual choices are preserved. Uncheck both types for fully manual control.</small>
+            <label class="checkbox_label" for="sc_ghost_user_messages">
+                <input id="sc_ghost_user_messages" type="checkbox" />
+                <span>Exclude summarized User messages from prompts</span>
+            </label>
+            <label class="checkbox_label" for="sc_ghost_assistant_messages">
+                <input id="sc_ghost_assistant_messages" type="checkbox" />
+                <span>Exclude summarized Assistant messages from prompts</span>
+            </label>
+            <label class="checkbox_label" for="sc_reapply_ghosting">
+                <input id="sc_reapply_ghosting" type="checkbox" />
+                <span>Reapply these choices to all summarized messages after a successful new summary</span>
+            </label>
+            <small class="sc-hint">Off by default. When checked, the next successful new batch can overwrite manual inclusion/exclusion, including earlier summarized messages. Changing settings, switching chats, refreshing, importing, and regenerating a snippet do not reapply ghosting.</small>
+            <div class="sc-row">
+                <label for="sc_context_range">Message ID or inclusive range</label>
+                <input id="sc_context_range" class="text_pole" type="text" placeholder="54-55" />
+                <div class="sc-button-row">
+                    <button id="sc_context_include" class="menu_button">Include in prompts</button>
+                    <button id="sc_context_exclude" class="menu_button">Exclude from prompts</button>
+                </div>
+            </div>
+
+            <h4>World Info for Summarization</h4>
+            <label class="checkbox_label" for="sc_summarizer_world_info">
+                <input id="sc_summarizer_world_info" type="checkbox" />
+                <span>Include triggered World Info in summarizer requests</span>
+            </label>
+            <small class="sc-hint">Scans all prior memory + the selected passage using ST's connected lorebooks and WI rules/budget. Includes all WI positions for new summaries, layer compression and regeneration. Lore is reference, not recorded events. Separate from ordinary chat World Info Scanning above.</small>
+
+            <div class="sc-row">
+                <label for="sc_summary_language">Summary Language</label>
+                <select id="sc_summary_language" class="text_pole">
+                    <option value="en">English</option>
+                    <option value="auto">Auto (no language override)</option>
+                    <option value="ru">Russian</option>
+                    <option value="zh">Chinese</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="de">German</option>
+                    <option value="fr">French</option>
+                    <option value="es">Spanish</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="it">Italian</option>
+                    <option value="uk">Ukrainian</option>
+                    <option value="custom">Other language</option>
+                </select>
+                <input id="sc_summary_custom_language" class="text_pole" type="text" aria-label="Custom summary language" placeholder="Language name, e.g. Polish" style="display: none;" />
+                <small class="sc-hint">English by default. Applies to every summary request, including compression and Refine. Auto leaves the language to your prompt and source. Existing memories change language only when regenerated or refined.</small>
+            </div>
 
             <!-- ═══ Actions ═══ -->
             <div class="sc-button-row">
@@ -39,7 +108,7 @@
                     <i class="fa-solid fa-stop"></i> Stop
                 </button>
                 <button id="sc_repair" class="menu_button">
-                    <i class="fa-solid fa-wrench"></i> Repair Orphans
+                    <i class="fa-solid fa-rotate"></i> Refresh Context Status
                 </button>
             </div>
 
@@ -137,10 +206,7 @@
                             <div class="summaryception-note">
                                 <span class="fa-solid fa-info-circle"></span>
                                 <small>
-                                    Uses a saved SillyTavern Connection Profile. Includes endpoint, API key, model, and presets.
-                                    Requires ST 1.12.4+. For full API key support, use staging (March 2026+).
-                                    ⚠️ Connection Profiles inject preset formatting into summary requests, which may degrade summary quality.
-                                    ⚠️ Consider using Default or OpenAI Compatible instead.
+                                    Uses ST's native profile service with the saved endpoint, key, model, generation preset and instruct format. The main chat connection stays selected. Response Length = 0 inherits the profile preset.
                                 </small>
                             </div>
                         </div>
@@ -236,69 +302,45 @@
                         </div>
                     </div>
 
-                    <!-- Turn Settings -->
-                    <h4 class="sc-section-title">📖 Verbatim Turn Settings</h4>
-
+                    <h4 class="sc-section-title">Raw Context and Blind Zone</h4>
                     <div class="sc-row">
-                        <label for="sc_verbatim_turns">
-                            <span>Verbatim Assistant Turns to Keep</span>
-                            <small class="sc-hint">Recent assistant turns sent word-for-word. Older ones are summarized.</small>
-                        </label>
-                        <div class="sc-slider-row">
-                            <input type="range" id="sc_verbatim_turns" min="1" max="50" step="1" />
-                            <span id="sc_verbatim_turns_val" class="sc-val">10</span>
-                        </div>
+                        <label for="sc_retained_context_tokens">Retained Raw Context (tokens)</label>
+                        <input id="sc_retained_context_tokens" type="number" min="1" step="100" class="text_pole" />
+                        <small class="sc-hint">Keep at least this many source tokens outside the blind zone. Both user and assistant text count through ST's tokenizer. Whole exchanges are kept; the actual tail can be larger.</small>
                     </div>
-
                     <div class="sc-row">
-                        <label for="sc_turns_per_summary">
-                            <span>Turns per Summary Batch</span>
-                            <small class="sc-hint">When limit is exceeded, this many oldest turns are summarized together into one snippet.</small>
-                        </label>
-                        <div class="sc-slider-row">
-                            <input type="range" id="sc_turns_per_summary" min="1" max="20" step="1" />
-                            <span id="sc_turns_per_summary_val" class="sc-val">3</span>
-                        </div>
+                        <label for="sc_batch_context_tokens">Source Tokens per Summary</label>
+                        <input id="sc_batch_context_tokens" type="number" min="1" step="100" class="text_pole" />
+                        <small class="sc-hint">Automatic generation waits for this many older eligible tokens. A batch uses whole exchanges up to this budget; a single oversized exchange is sent whole. Prior summaries, WI and instructions are additional. Force Summarize can process a smaller remainder.</small>
                     </div>
-
+                    <div class="sc-row">
+                        <label for="sc_blind_zone_exchanges">Blind Zone (latest exchanges)</label>
+                        <input id="sc_blind_zone_exchanges" type="number" min="0" step="1" class="text_pole" />
+                        <small class="sc-hint">Default: 1 user/assistant exchange. Excluded before token counting, triggers and source selection, including Force Summarize. Automatic ghosting cannot hide this zone, even with Reapply enabled. Manual hiding is preserved. A trailing unanswered user message is also protected.</small>
+                    </div>
                     <hr class="sc-divider" />
 
-                    <!-- Layer Settings -->
-                    <h4 class="sc-section-title">🔄 Layer Settings (the "ception")</h4>
-
+                    <h4 class="sc-section-title">Memory Token Budgets</h4>
                     <div class="sc-row">
-                        <label for="sc_snippets_per_layer">
-                            <span>Max Snippets per Layer</span>
-                            <small class="sc-hint">When exceeded, oldest snippets are promoted (re-summarized) into a deeper layer.</small>
-                        </label>
-                        <div class="sc-slider-row">
-                            <input type="range" id="sc_snippets_per_layer" min="3" max="100" step="1" />
-                            <span id="sc_snippets_per_layer_val" class="sc-val">20</span>
-                        </div>
+                        <label for="sc_memory_token_budget">Total Memory Budget (tokens)</label>
+                        <input type="number" id="sc_memory_token_budget" class="text_pole" min="5" step="100" />
+                        <small class="sc-hint">Five layers share this budget as x, x/divisor, x/divisor², x/divisor³, x/divisor⁴. Oldest summaries move when their layer exceeds its token budget.</small>
                     </div>
-
                     <div class="sc-row">
-                        <label for="sc_snippets_per_promotion">
-                            <span>Snippets per Promotion</span>
-                            <small class="sc-hint">How many oldest snippets merge together when promoting to the next layer.</small>
-                        </label>
-                        <div class="sc-slider-row">
-                            <input type="range" id="sc_snippets_per_promotion" min="2" max="20" step="1" />
-                            <span id="sc_snippets_per_promotion_val" class="sc-val">2</span>
-                        </div>
+                        <label for="sc_layer_divisor">Layer Divisor</label>
+                        <input type="number" id="sc_layer_divisor" class="text_pole" min="1.01" step="0.1" />
+                        <small class="sc-hint">Default: 2. Provider output tokens are saved with each summary and never recounted after a model change. If usage is unavailable, a one-time estimate is marked.</small>
                     </div>
-
-                    <div class="sc-row">
-                        <label for="sc_max_layers">
-                            <span>Maximum Layer Depth</span>
-                            <small class="sc-hint">How many recursive layers of summarization are allowed.</small>
-                        </label>
-                        <div class="sc-slider-row">
-                            <input type="range" id="sc_max_layers" min="1" max="10" step="1" />
-                            <span id="sc_max_layers_val" class="sc-val">5</span>
-                        </div>
+                    <label class="checkbox_label"><input type="checkbox" id="sc_override_layer_budgets" /><span>Override Individual Layer Budgets</span></label>
+                    <div class="sc-layer-budget-grid">
+                        <label>L0 tokens<input type="number" id="sc_layer_budget_0" class="text_pole sc-layer-budget-input" min="1" step="100" /></label>
+                        <label>L1 tokens<input type="number" id="sc_layer_budget_1" class="text_pole sc-layer-budget-input" min="1" step="100" /></label>
+                        <label>L2 tokens<input type="number" id="sc_layer_budget_2" class="text_pole sc-layer-budget-input" min="1" step="100" /></label>
+                        <label>L3 tokens<input type="number" id="sc_layer_budget_3" class="text_pole sc-layer-budget-input" min="1" step="100" /></label>
+                        <label>L4 tokens<input type="number" id="sc_layer_budget_4" class="text_pole sc-layer-budget-input" min="1" step="100" /></label>
                     </div>
-
+                    <small id="sc_budget_total" class="sc-hint"></small>
+                    <small class="sc-hint">New summaries are saved before checking layer overflow. Transfers use original L0 texts with the normal summarization prompt and no forced output size. If a transfer fails or L4 is full, processing stops with a warning; the new summary remains saved.</small>
                     <hr class="sc-divider" />
 
                     <!-- Prompts -->

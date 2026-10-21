@@ -1,309 +1,89 @@
-# 🧠 Summaryception
+# Summaryception for SillyTavern
 
-### Layered Recursive Memory for SillyTavern
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.9**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
-> Your AI remembers **thousands of turns** in under **20k tokens**. No context bloat. No lost plot threads. No compromises.
+This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
-Summaryception is a non-destructive, context-aware memory system for [SillyTavern](https://github.com/SillyTavern/SillyTavern) that replaces brute-force context stuffing with intelligent layered summarization. It keeps your most recent turns verbatim while compressing older conversation into ultra-compact summary snippets — organized in recursive layers that scale indefinitely.
+Summaryception records detailed RP memories, links them to their source messages, and injects the retained summaries into SillyTavern. Recent assistant turns remain available verbatim. Summarization is lossy; the prompts ask for concrete actions, dialogue, objects, spatial details, knowledge boundaries and unresolved consequences.
 
----
+## Raw context and blind zone
 
-## ✨ The Problem
+Advanced Settings controls both the retained raw tail and the source batch in tokens:
 
-Every roleplayer hits the same wall:
+- **Retained Raw Context:** 12,000 tokens by default, measured across user and assistant source text through ST's current tokenizer.
+- **Source Tokens per Summary:** 24,000 tokens by default. Automatic generation waits until at least this many older tokens are available outside the retained tail.
+- **Blind Zone:** the latest **1 completed exchange** by default. An exchange includes user messages and the following assistant replies, including multiple group replies. Set 0 to disable or increase the number to protect more exchanges.
 
-| Approach | What happens |
-|---|---|
-| **No summary** | Context fills up → hard truncation → everything before the cutoff is **gone forever** |
-| **Basic summarization** | Lossy single summary → important details vanish → you compensate by keeping 20+ verbatim turns → context still bloats |
-| **More verbatim turns** | 20 turns × 1,500 tokens = 30k tokens of mostly atmospheric prose the LLM has to process → attention degrades → coherence drops anyway |
+The blind zone is removed before tokenization and trigger calculation. It contributes no tokens toward a new batch and never enters source selection, even with Force Summarize. An unanswered trailing user message is also protected. Regenerating the newest answer does not advance the token trigger when that exchange is blind. Processing waits while native ST is generating a chat response.
 
-The conventional wisdom — *"keep more raw turns"* — is a band-aid for bad compression.
+Outside the blind zone, the newest whole exchanges totaling at least the retained budget stay raw. Older whole exchanges form batches up to the source budget. A single oversized exchange is sent whole rather than split; the retained tail can also exceed its budget at an exchange boundary. Force Summarize can process a smaller older remainder but still preserves the retained tail and blind zone. Prior summaries, World Info and instructions are additional prompt tokens. Output-token accounting for memory layers remains separate.
 
-## 💡 The Solution
+Automatic ghosting cannot hide blind exchanges, including in Reapply mode. Increasing the zone or loading a chat restores any automatic ghosts inside it. Explicit manual hiding remains the user's choice. Changing raw-context settings stops the active summary job before replanning. The former assistant-count settings are no longer used; the new token settings start with the defaults above.
 
-Summaryception flips the approach: **compress aggressively, lose nothing.**
+Backlog processing uses source tokens and whole-exchange batches. Only one backlog dialog can be open; switching chats or stopping closes it without processing a different chat.
 
-A context-aware summarizer prompt examines each batch of turns against what's *already been summarized*, outputting only the **narrative delta** — new plot points, state changes, character decisions. Nothing repeated, nothing lost.
+Existing token settings are preserved on upgrade. Set the two controls explicitly to use the new defaults in an existing installation.
 
-**Real example** — 3 turns, ~5,200 raw tokens, compressed to:
+## Installation and native updates
 
-> *Alina kisses Lodactio; he reciprocates; she grows to human size, straddling him; she squeezes his crotch and intends to undo his pants.*
+Open **Extensions > Install extension** and paste:
 
-**27 tokens. 125:1 compression. Every plot-relevant beat preserved.**
-
-And because each snippet is written with knowledge of all previous snippets, they get *more efficient over time* — the summarizer doesn't re-establish characters, settings, or relationships that are already recorded. Early snippets might be 40 tokens. By snippet 10, you're seeing 15-token summaries.
-
----
-
-## 🔄 How It Works
-
-```
-YOUR CHAT (e.g., 200 turns)
-│
-│  Turns 1-180: Ghosted (hidden from LLM, still readable by you)
-│  Turns 181-200: Kept VERBATIM (7 most recent assistant turns)
-│
-│  The ghosted turns have been compressed into:
-│
-│  ┌──────────────────────────────────────────┐
-│  │  LAYER 2 (Deep Memory)                   │
-│  │  Ultra-compressed summaries of Layer 1   │
-│  │  Each covers ~27 turns                   │
-│  ├──────────────────────────────────────────┤
-│  │  LAYER 1 (Meta-Summaries)                │
-│  │  Compressed summaries of Layer 0         │
-│  │  Each covers ~9 turns                    │
-│  ├──────────────────────────────────────────┤
-│  │  LAYER 0 (Turn Summaries)                │
-│  │  Direct summaries of conversation turns  │
-│  │  Each covers ~3 turns                    │
-│  ├──────────────────────────────────────────┤
-│  │  VERBATIM TURNS (most recent 7)          │
-│  │  Sent word-for-word to the LLM           │
-│  └──────────────────────────────────────────┘
-│
-│  Total context: ~12k tokens
-│  Total narrative coverage: EVERYTHING
+```text
+https://github.com/ilya626/Extension-Summaryception
 ```
 
-### The "Ception" — Recursive Layer Promotion
+Use **Manage extensions > Update** for subsequent versions, then reload the page. Manual updates work with `auto_update: false`; unattended updates remain disabled. ST pulls from the installed repository's `origin` and current branch. The manifest homepage does not select the update source, and the original author's repository does not distribute this fork's changes.
 
-When a layer fills up (default: 30 snippets), the oldest snippets are promoted to the next deeper layer:
+To move an existing installation to this fork, back up ST's user data, remove the old extension through Manage extensions without selecting **Also clean up extension data**, then install the URL above with the same installation target (current user or all users). Keep only one installed copy and reload. Summary memory remains in chat metadata and settings remain under `extensionSettings.summaryception`; ordinary extension deletion only removes the extension directory. Alternatively, change the existing installation's Git `origin` to this fork on the ST host once, then use native Update.
 
-1. **Seed promotion** — The very first time a deeper layer opens, the oldest snippet is promoted **directly** as a seed, no LLM call, preserving maximum information as the foundation for that layer.
-2. **Subsequent promotions** — Additional overflow snippets (default: 3 at a time) are summarized together against the destination layer's existing content (including the seed) as prior context.
-3. **Cascade** — If the destination layer also fills up, the process repeats, creating Layer 2, Layer 3, etc.
+Replacing extension files from a ZIP preserves user data too, but does not change an existing Git `origin` or enable Git updates for a directory without `.git`.
 
-Each layer multiplies the turn coverage per snippet while maintaining coherent narrative continuity.
+## Memory layer token budgets
 
----
+Five layers are limited by saved output-token counts, not the number of summaries. Set **Total Memory Budget** in Advanced Settings. The **Layer Divisor** defaults to 2:
 
-## 📊 The Math
+`L0 = total / (1 + 1/d + 1/d² + 1/d³ + 1/d⁴)`; `Li = L0 / dⁱ`.
 
-*Using ~70 tokens per snippet as a working median. Actual snippets range from ~30 tokens (late-layer, minimal delta) to ~100 tokens (early context establishment). Your results will vary based on narrative density.*
+| Layer | Default token budget |
+|---|---:|
+| L0 | 8,000 |
+| L1 | 4,000 |
+| L2 | 2,000 |
+| L3 | 1,000 |
+| L4 | 500 |
+| Total | 15,500 |
 
-### Default Settings (30 snippets/layer, 3 turns/batch, 3 snippets/promotion)
+Check **Override Individual Layer Budgets** to set all five capacities yourself. The displayed total becomes their sum. The divisor determines capacities only: it does not constrain model output or dictate how many summaries enter one request.
 
-Each promotion merges 3 snippets into 1, so each layer multiplies turn coverage by 3×.
+New summaries are saved in L0 first, even if this exceeds its budget. Only then does overflow processing start: the oldest complete summaries covering the excess move through a normal summarization request into the next layer. The first transition also calls the model. Every transition uses the normal configured prompts and response limit; no extra output-size instruction or compression ratio is imposed. Actual output size determines whether further transitions are needed.
 
-| Layer | Snippets | Turns per Snippet | Total Turns Covered | ~Tokens |
-|---|---|---|---|---|
-| Verbatim | 7 turns | — | 7 | ~5,000 |
-| Layer 0 | 30 | 3 | 90 | ~2,100 |
-| Layer 1 | 30 | 9 | 270 | ~2,100 |
-| Layer 2 | 30 | 27 | 810 | ~2,100 |
-| Layer 3 | 30 | 81 | 2,430 | ~2,100 |
-| Layer 4 | 30 | 243 | 7,290 | ~2,100 |
-| **Total** | — | — | **~10,897 turns** | **~15,500 tokens** |
+Provider output counts are saved unchanged with each response, including any reasoning tokens counted by that provider. Changing models does not retokenize existing memory. If an API omits usage, a one-time estimate is saved and marked in Layer Stats. This budget measures stored summary counts; retained raw chat, WI and prompt wrappers consume additional context.
 
-> **Nearly 11,000 turns of narrative history in ~16k tokens.**
+Original L0 summaries are archived in chat metadata and exports, outside injected context. Deep transitions use those original texts to avoid repeatedly summarizing only a compressed version. If L4 overflows, transfers stop with a warning. The new summary remains saved, with its source coverage and normal visibility policy applied. Increase the budget or delete a summary to continue. Legacy deep summaries lacking original L0 records remain intact; compression warns rather than pretending their originals are known.
 
-### Conservative Estimate (smaller snippets at deeper layers)
+Manual edits, Regenerate and Refine in deeper layers replace the compression source for their own lineage. Later transfers preserve these revisions instead of silently reverting to old L0 text. Original token counts and message membership remain recorded.
 
-In practice, deeper layers produce shorter snippets as they compress already-compressed material. A more realistic breakdown:
+## Connections and language
 
-| Layer | Snippets | Turns per Snippet | ~Tokens/Snippet | ~Layer Tokens |
-|---|---|---|---|---|
-| Verbatim | 7 turns | — | — | ~5,000 |
-| Layer 0 | 30 | 3 | ~80 | ~2,400 |
-| Layer 1 | 30 | 9 | ~70 | ~2,100 |
-| Layer 2 | 30 | 27 | ~60 | ~1,800 |
-| Layer 3 | 30 | 81 | ~50 | ~1,500 |
-| Layer 4 | 30 | 243 | ~40 | ~1,200 |
-| **Total** | — | — | — | **~14,000 tokens** |
+- **Default (Main API)** uses ST's native raw-generation API.
+- **Connection Profile** uses ST's native profile service, including its saved endpoint, model, key, preset and instruct formatting. Response Length = 0 inherits the preset.
+- **Ollama** and **OpenAI Compatible** offer separate endpoints. Local requests use ST's CORS proxy where required.
+- **Summary Language** selects the output language for new summaries, transitions, regeneration and Refine. Auto adds no language requirement. Custom prompts are preserved.
 
-> **~11,000 turns in ~14k tokens.** The raw conversation? Roughly **15–25 million tokens.** That's a compression ratio approaching **1,000:1**.
+The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion and all insertion positions. Temporary scan state is restored afterward.
 
-For comparison, most roleplayers hit 17,500 tokens by **turn 10** with verbatim context. Summaryception uses the same budget to remember **eleven thousand**.
+## Source messages and visibility
 
----
+Each summary stores stable IDs for the messages it actually used. **Sources** shows that membership. **Regenerate** uses those same messages; **Refine** supplies them together with the current summary and asks for a complete revision with omitted details. Deleted or missing sources are reported, never replaced with a guessed numeric range.
 
-## 👻 Non-Destructive Ghost Mode
+Deleting a summary releases messages with no remaining summary. Automatic hiding is removed from those messages while manual visibility choices are preserved. Automatic inclusion/exclusion uses ST's native `/hide` and `/unhide`. User choices remain until a successful new batch, and are reapplied then only if **Reapply Ghosting on New Summary** is checked.
 
-Summaryception never deletes your messages. Summarized turns are **ghosted** — hidden from the LLM context but fully visible and readable in your chat UI. Scroll up anytime to read the original prose.
+Empty outputs, model refusals and provider content-filter responses are rejected. Invalid assistant replies do not count toward the trigger. Failed initial generation leaves memory and visibility unchanged. Failed compression retains the already saved new summary and stops transfers; it does not delete that summary or request its source messages again.
 
-- 👻 Ghosted messages show a system icon in the chat
-- Clear Memory unghosts everything instantly
-- Your chat file is never modified destructively
+Summary insertion uses standard ST positions: None, Before Main Prompt / Story String, After Main Prompt / Story String, or In-chat @ Depth, with role and scan settings.
 
----
+## Compatibility and verification
 
-## 🧹 Clean Prompt Isolation
+Validated against SillyTavern 1.19.0. Preserve chat metadata when transferring memory; Export Memory includes source membership, archived originals and token counts.
 
-When Summaryception calls the summarizer, it **temporarily disables all Chat Completion preset toggles** — your creative writing prompts, character instructions, scenario text, everything. The summarizer sees only its own system prompt and the passage to summarize.
-
-This means:
-- ✅ No 4k tokens of story-writing instructions competing with a 200-token summarization task
-- ✅ Budget models perform like premium models on the focused extraction task
-- ✅ Your preset is restored instantly after, whether the call succeeds or fails
-
----
-
-## 🔁 Context-Aware Incremental Summaries
-
-This is the core innovation. The summarizer prompt receives:
-
-| Variable | Contents |
-|---|---|
-| `{{player_name}}` | Your active persona name |
-| `{{context_str}}` | **That layer's existing summaries** — everything already recorded |
-| `{{story_txt}}` | The new passage to summarize |
-
-The instruction: *"Summarize only necessary elements to coherently continue the Prior Context. Exclude anything already covered."*
-
-This means:
-- **Snippet 1** has to establish characters, setting, relationships (~80–100 tokens)
-- **Snippet 5** only records new events — characters and setting are established (~50–70 tokens)
-- **Snippet 10** is pure narrative delta — just what changed (~30–50 tokens)
-- **Layer promotions** work the same way — each deeper layer summarizes against its own existing content
-
-Every summary is a **minimal diff**, not a redundant recap.
-
----
-
-## 🛡️ Resilient API Handling
-
-- **Exponential backoff** with jitter for rate limits (429) and server errors (500/502/503/504)
-- **Retry-After header** respected when the server provides one
-- Retries up to 5 times with delays from 2s → 60s
-- **Failed batches are never ghosted** — turns stay visible for the next attempt
-- Network errors, timeouts, and empty responses are all handled gracefully
-
----
-
-## 📦 Backlog Detection
-
-Opening an existing chat with 100+ messages? Summaryception detects the backlog and offers you a choice:
-
-| Option | What it does |
-|---|---|
-| **Process Entire Backlog** | Summarizes everything with a cancelable progress bar |
-| **Skip Backlog** | Ignores old turns, only tracks new ones going forward |
-| **Just One Batch** | Processes a single batch now, handles the rest incrementally |
-
-Progress is saved continuously — cancel anytime and pick up where you left off.
-
----
-
-## ⚙️ Configuration
-
-All settings are adjustable from the SillyTavern Extensions panel:
-
-| Setting | Default | Description |
-|---|---|---|
-| Verbatim Turns | 10 | Recent assistant turns kept word-for-word |
-| Turns per Batch | 3 | Oldest turns summarized together per trigger |
-| Snippets per Layer | 30 | Max snippets before promoting to next layer |
-| Snippets per Promotion | 3 | How many snippets merge on promotion |
-| Max Layers | 5 | Maximum recursion depth |
-
-### Prompt Presets
-
-| Preset | Best For | Focus |
-|---|---|---|
-| **Narrative State** (default) | Character RP, drama, thrillers, romance | Interactions, emotions, relationships, atmosphere, subtext |
-| **Game State** | Roguelites, strategy, mechanical games | Plot points, quests, locations, interactables, state changes |
-| **Custom** | Your own prompt | Whatever you write |
-
-Select a preset from the dropdown in Summary Prompts, or edit the prompt directly — it auto-switches to Custom.
-
-Plus fully customizable:
-- 📝 Summarizer system prompt
-- 📝 Summarizer user prompt (with `{{player_name}}`, `{{context_str}}`, `{{story_txt}}` variables)
-- 📝 Injection wrapper template
-
----
-
-## 🔌 Connection Settings
-
-Summaryception can use different backends for summarization, independent of your main chat connection:
-
-| Source | Description |
-|---|---|
-| **Default** | Uses SillyTavern's active connection — simplest setup |
-| **OpenAI Compatible** | Direct endpoint with URL, API key, and model — bypasses all ST formatting |
-| **Ollama** | Local Ollama instance with model browser |
-| **Connection Profile** | Uses an ST Connection Profile (⚠️ inherits preset formatting — may degrade summary quality) |
-
-> 💡 **Recommended:** Use **Default** or **OpenAI Compatible** for cleanest results. Connection Profiles inject preset formatting into summary requests, which can cause the model to roleplay instead of summarize.
-
----
-
-## 🗂️ Built-in Tools
-
-- **Layer Stats** — Live view of snippet counts per layer and ghosted message count
-- **Injection Preview** — See exactly what gets sent to the LLM
-- **Snippet Browser** — Browse, edit, regenerate, and delete individual snippets across all layers
-- **Export/Import** — Save and restore memory as JSON
-- **Force Summarize** — Manually trigger summarization
-- **Stop** — Abort any running summarization, progress saved
-- **Repair** — Find and fix orphaned hidden messages
-- **Slash Commands** — `/sc-status`, `/sc-preview`, `/sc-clear`
-
----
-
-## 📥 Installation
-
-### Requirements
-
-- **SillyTavern 1.16.0+** (release or staging). Older versions use an incompatible `generateRaw` signature and will not work correctly.
-
-### From SillyTavern UI
-1. Open **Extensions** → **Install Extension**
-2. Paste: `https://github.com/Lodactio/Extension-Summaryception`
-3. Click Install
-4. Find **🧠 Summaryception** in Extensions settings
-
-### Manual
-```bash
-cd SillyTavern/data/default-user/extensions/third-party/
-git clone https://github.com/Lodactio/Extension-Summaryception
-```
-Restart SillyTavern and enable the extension.
-
----
-
-## 🧠 Why This Works Better
-
-| | Traditional Summary | Summaryception |
-|---|---|---|
-| **Compression** | ~10:1, lossy | ~125:1 per snippet, lossless |
-| **Context at turn 100** | 30k+ tokens or truncated | ~10k tokens |
-| **Context at turn 1,000** | Impossible without truncation | ~13k tokens |
-| **Context at turn 10,000** | Literally impossible | ~16k tokens |
-| **Lost information** | Lots — hedged by keeping more raw turns | None — every state change is tracked |
-| **Coherence over time** | Degrades as context grows | Stable indefinitely |
-| **Works with budget models** | Poorly — needs powerful summarizer | Excellently — prompt does the heavy lifting |
-
----
-
-## Community Forks
-
-These forks extend Summaryception with specialized features. They use the same internal module name, so **install only one at a time** — your existing settings and per-chat memory will carry over.
-
-### [Per-Character Memory Banks](https://github.com/dogoo9/Extension-Summaryception) by dogoo9
-
-Keeps separate summary memory for each character card in the same chat. Useful for group chats or stories where you switch between characters and don't want their memories bleeding together.
-
-### [Lorebook Ingestion](https://github.com/jeromehbonaparte-star/Extension-Summaryception-Lorebook) by Romuromylus
-
-Automatically extracts stable facts (character traits, locations, items) from summaries and proposes them as World Info entries. Summaries handle events and state changes; lorebook entries handle things that should never be forgotten across layers. Includes a review queue so nothing gets written without your approval.
-
-### [Verdash's Summaryception](https://github.com/vadash/Extension-Summaryception) By Verdash
-
-Highly Polished Summaryception with many requested features by the community and superior context management.
-
----
-
-## 🤝 Credits
-
-Built with frustration at context limits and love for long-form roleplay.
-
-If this saves your 500-turn adventure from amnesia, consider starring the repo. ⭐
-
----
-
-## 📄 License
-
-AGPL-3.0
+All 57 local behavior tests pass. Tests substitute ST host APIs and model replies. Desktop/mobile Edge checks use native ST with intercepted model responses; they do not establish real-model summary quality. This distribution contains only extension files, license and documentation. Local tests, screenshots, reports, chat data and credentials are not included.

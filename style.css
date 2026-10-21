@@ -105,6 +105,18 @@
     flex-wrap: wrap;
 }
 
+.sc-settings .sc-button-row > .menu_button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    flex: 1 0 auto;
+    width: auto;
+    max-width: 100%;
+    margin: 0;
+    white-space: nowrap;
+}
+
 .sc-settings .menu_button_danger {
     color: #ff6b6b;
     border-color: #ff6b6b;
@@ -144,6 +156,7 @@
 
 .sc-snippet {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: 6px;
     padding: 4px 6px;
@@ -158,8 +171,9 @@
     background: rgba(255, 255, 255, 0.08);
 }
 
-.sc-snippet-text {
+.sc-snippet > .sc-snippet-text {
     flex: 1;
+    flex-basis: 100%;
     word-break: break-word;
 }
 
@@ -169,6 +183,12 @@
     white-space: nowrap;
     flex-shrink: 0;
 }
+
+.sc-snippet-sources { width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.sc-snippet-sources summary { cursor: pointer; opacity: 0.7; }
+.sc-source-list { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0; font: inherit; }
+.sc-snippet-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sc-snippet-actions .menu_button { margin: 0; }
 
 .sc-snippet-delete {
     flex-shrink: 0;
@@ -470,3 +490,7 @@
     flex-direction: column;
     gap: 6px;
 }
+
+.sc-layer-budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; }
+.sc-layer-budget-grid label { min-width: 0; }
+.sc-layer-budget-grid input { width: 100%; }

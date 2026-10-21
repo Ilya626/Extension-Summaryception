@@ -14,6 +14,9 @@
  * AGPL-3.0
  */
 
+import { hasProviderRefusal, InvalidModelOutputError, requireModelOutput } from './output-validation.js';
+import { providerUsage } from './token-memory.js';
+
 const MODULE_NAME = '[Summaryception][Connection]';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -85,20 +88,26 @@ function getProxyHeaders() {
  * @returns {Promise<string>} - The generated response text
  * @throws {ConnectionError|Error} - If the request fails
  */
-export async function sendSummarizerRequest(settings, systemPrompt, userPrompt) {
+export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, { signal, returnDetails = false } = {}) {
     const source = settings.connectionSource || 'default';
-
+    let result;
     switch (source) {
         case 'profile':
-            return await sendViaProfile(settings.connectionProfileId, systemPrompt, userPrompt);
+            result = await sendViaProfile(settings.connectionProfileId, systemPrompt, userPrompt, settings.summarizerResponseLength, signal);
+            break;
         case 'ollama':
-            return await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt);
+            result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal);
+            break;
         case 'openai':
-            return await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens);
+            result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal);
+            break;
         case 'default':
         default:
-            return await sendViaDefault(systemPrompt, userPrompt, settings.summarizerResponseLength);
+            result = await sendViaDefault(systemPrompt, userPrompt, settings.summarizerResponseLength, signal);
     }
+    const details = typeof result === 'string' ? { text: result } : result;
+    requireModelOutput(details.text);
+    return returnDetails ? details : details.text;
 }
 
 // ─── Mode 1: Default (generateRaw) ──────────────────────────────────
@@ -106,179 +115,145 @@ export async function sendSummarizerRequest(settings, systemPrompt, userPrompt) 
 /**
  * Uses ST's built-in generateRaw(), which routes through the active connection.
  */
-async function sendViaDefault(systemPrompt, userPrompt, responseLength) {
-    const { generateRaw } = SillyTavern.getContext();
-
-    if (!generateRaw) {
-        throw new ConnectionError(
-            'generateRaw is not available in the current SillyTavern context.',
-            { retryable: false }
-        );
-    }
-
-    // ST refactored generateRaw from positional args to an object param
-    // in PR #4277 (July 2025). We need to support both signatures.
-    //
-    // New (July 2025+): generateRaw({ prompt, systemPrompt, responseLength })
-    // Old (pre-July 2025): generateRaw(prompt, systemPrompt)
-    //
-    // Detection: the new signature destructures an object, so if we check
-    // the function's length (expected positional params), 0 or 1 means
-    // object-style, 2+ means positional-style.
-
-    let result;
-
-    if (generateRaw.length <= 1) {
-        // Modern ST: object-based params
-        const options = {
-            systemPrompt: systemPrompt,
-            prompt: userPrompt,
-        };
-
-        if (responseLength && responseLength > 0) {
-            options.responseLength = responseLength;
+async function sendViaDefault(systemPrompt, userPrompt, responseLength, signal) {
+    const { generateRaw, generateRawData, extractMessageFromData, eventSource, event_types } = SillyTavern.getContext();
+    signal?.throwIfAborted();
+    const onAbort = () => {
+        if (event_types?.GENERATION_STOPPED) void eventSource.emit(event_types.GENERATION_STOPPED);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+        if (typeof generateRawData === 'function' && typeof extractMessageFromData === 'function') {
+            const data = await generateRawData({ systemPrompt, prompt: userPrompt,
+                ...(responseLength > 0 ? { responseLength: Number(responseLength) } : {}) });
+            const { cleanUpMessage } = await import('/script.js');
+            const text = cleanUpMessage({ getMessage: extractMessageFromData(data), isImpersonate: false, isContinue: false,
+                displayIncompleteSentences: true, includeUserPromptBias: false, trimNames: true, trimWrongNames: true });
+            return { text: requireModelOutput(text, data), ...providerUsage(data) };
         }
 
-        result = await generateRaw(options);
-    } else {
-        // Legacy ST: positional args — generateRaw(prompt, systemPrompt)
-        // Note: legacy signature does not support responseLength override
-        console.warn(
-            '[Summaryception] Detected legacy generateRaw (positional args). ' +
-            'Consider updating SillyTavern to July 2025+ for full feature support.'
-        );
-        result = await generateRaw(userPrompt, systemPrompt);
-    }
+        if (!generateRaw) {
+            throw new ConnectionError(
+                'generateRaw is not available in the current SillyTavern context.',
+                { retryable: false }
+            );
+        }
 
-    if (!result || typeof result !== 'string') {
-        throw new ConnectionError(
-            'generateRaw returned an empty or invalid response.',
-            { retryable: true }
-        );
-    }
+        // ST refactored generateRaw from positional args to an object param
+        // in PR #4277 (July 2025). We need to support both signatures.
+        //
+        // New (July 2025+): generateRaw({ prompt, systemPrompt, responseLength })
+        // Old (pre-July 2025): generateRaw(prompt, systemPrompt)
+        //
+        // Detection: the new signature destructures an object, so if we check
+        // the function's length (expected positional params), 0 or 1 means
+        // object-style, 2+ means positional-style.
 
-    return result;
+        let result;
+
+        if (generateRaw.length <= 1) {
+            // Modern ST: object-based params
+            const options = {
+                systemPrompt: systemPrompt,
+                prompt: userPrompt,
+            };
+
+            if (responseLength && responseLength > 0) {
+                options.responseLength = responseLength;
+            }
+
+            result = await generateRaw(options);
+        } else {
+            // Legacy ST: positional args — generateRaw(prompt, systemPrompt)
+            // Note: legacy signature does not support responseLength override
+            console.warn(
+                '[Summaryception] Detected legacy generateRaw (positional args). ' +
+                'Consider updating SillyTavern to July 2025+ for full feature support.'
+            );
+            result = await generateRaw(userPrompt, systemPrompt);
+        }
+
+        if (typeof result !== 'string') {
+            throw new InvalidModelOutputError('generateRaw returned an empty or invalid response');
+        }
+
+        return result;
+    } finally {
+        signal?.removeEventListener('abort', onAbort);
+    }
+}
+
+/** Mirror ST TextCompletionService's output cleanup using the selected instruct preset. */
+async function cleanProfileText(text, profile) {
+    const ctx = SillyTavern.getContext();
+    const preset = profile?.instruct && ctx.getPresetManager?.('instruct')?.getCompletionPresetByName(profile.instruct);
+    if (!preset) return text;
+    const { getInstructStoppingSequences } = await import('/scripts/instruct-mode.js');
+    text = text.replace(/[^\S\r\n]+$/gm, '');
+    for (const stop of getInstructStoppingSequences({ customInstruct: preset, useStopStrings: false })) {
+        for (let size = stop.length; size > 0; size--) {
+            if (text.endsWith(stop.slice(0, size))) { text = text.slice(0, -size); break; }
+        }
+    }
+    for (const sequence of [preset.stop_sequence, preset.input_sequence]) {
+        if (sequence?.trim() && text.includes(sequence)) text = text.slice(0, text.indexOf(sequence));
+    }
+    for (const sequences of [preset.output_sequence, preset.last_output_sequence]) {
+        for (const line of (sequences || '').split('\n').filter(line => line.trim())) text = text.replaceAll(line, '');
+    }
+    return text;
 }
 
 // ─── Mode 2: Connection Profile ──────────────────────────────────────
 
-/**
- * Uses ST's ConnectionManagerRequestService to send a request via a saved profile.
- * Requires SillyTavern with PR #3603 merged (March 2025+).
- * Full API key support requires staging with Issue #5348 fix (March 30, 2026+).
- *
- * IMPORTANT: sendRequest() expects messages as an array of {role, content} objects,
- * NOT as a generateRaw()-style options object. Passing {systemPrompt, prompt} as
- * the second argument causes the entire object to be stuffed into the message
- * content field, resulting in "Invalid input" / validation errors from the API.
- */
-async function sendViaProfile(profileId, systemPrompt, userPrompt) {
-    if (!profileId) {
-        throw new ConnectionError(
-            'No Connection Profile selected. Please select one in Summaryception settings.',
-            { retryable: false }
-        );
+/** Call ST's profile service without changing the active connection or its preset. */
+async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLength, signal) {
+    if (!profileId) throw new ConnectionError('Select a Connection Profile in Summaryception settings.');
+    const ctx = SillyTavern.getContext();
+    const service = ctx.ConnectionManagerRequestService;
+    if (typeof service?.sendRequest !== 'function') {
+        throw new ConnectionError('SillyTavern Connection Manager is unavailable. Enable it or update ST.');
     }
-
-    const context = SillyTavern.getContext();
-    const service = context.ConnectionManagerRequestService;
-
-    if (!service) {
-        throw new ConnectionError(
-            'ConnectionManagerRequestService is not available. ' +
-            'Your SillyTavern version may be too old. Requires ST with PR #3603 (March 2025+).',
-                                  { retryable: false }
-        );
+    const profile = service.getProfile?.(profileId);
+    if (typeof service.getProfile === 'function' && !profile) {
+        throw new ConnectionError('The selected Connection Profile no longer exists.', { status: 404 });
     }
-
-    if (typeof service.sendRequest !== 'function') {
-        throw new ConnectionError(
-            'ConnectionManagerRequestService.sendRequest() is not available. ' +
-            'Please update SillyTavern to the latest staging version.',
-            { retryable: false }
-        );
-    }
-
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+    ];
     try {
-        // Build messages as proper {role, content} objects.
-        // sendRequest expects: sendRequest(profileId, messages, options?)
-        // where messages is a string OR an array of {role, content} objects.
-        const messages = [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-        ];
-
-        const raw = await service.sendRequest(profileId, messages, {
-            ignoreInstruct: true,
-        });
-
-        // Debug: log what we actually got back
-        console.log('[Summaryception][Connection] Profile sendRequest returned:', typeof raw, raw);
-
-        // Handle various possible return types
-        let result;
-        if (typeof raw === 'string') {
-            result = raw;
-        } else if (raw?.content) {
-            result = raw.content;
-        } else if (raw?.message?.content) {
-            result = raw.message.content;
-        } else if (raw?.choices?.[0]?.message?.content) {
-            result = raw.choices[0].message.content;
-        } else if (raw?.data) {
-            result = typeof raw.data === 'string' ? raw.data : JSON.stringify(raw.data);
-        } else if (raw && typeof raw === 'object') {
-            const str = JSON.stringify(raw);
-            console.warn('[Summaryception][Connection] Unexpected return type from sendRequest:', str.substring(0, 500));
-            throw new ConnectionError(
-                `Connection Profile returned unexpected type: ${typeof raw}. ` +
-                `Preview: ${str.substring(0, 200)}. ` +
-                `Please report this on the Summaryception GitHub.`,
-                { retryable: false }
-            );
-        } else {
-            throw new ConnectionError(
-                'Connection Profile returned an empty or invalid response.',
-                { retryable: true }
-            );
-        }
-
-        if (!result || !result.trim()) {
-            throw new ConnectionError(
-                'Connection Profile returned an empty response.',
-                { retryable: true }
-            );
-        }
-
-        return result;
-
+        // Native signature: profileId, messages, maxTokens, options.
+        // undefined inherits the profile preset; native preset/instruct defaults stay on.
+        const raw = await service.sendRequest(profileId, messages,
+            responseLength > 0 ? Number(responseLength) : undefined, { signal, extractData: false });
+        if (hasProviderRefusal(raw)) throw new InvalidModelOutputError('the provider reported a refusal or content filter');
+        const data = raw?.data ?? raw;
+        const api = profile && service.validateProfile?.(profile)?.selected;
+        let result = typeof data === 'string' ? data
+            : (Array.isArray(data?.content) ? data.content.filter(part => part.type === 'text').map(part => part.text).join('') : data?.content)
+                ?? data?.message?.content ?? data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text
+                ?? data?.response ?? data?.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('');
+        if (api && typeof ctx.extractMessageFromData === 'function') result = ctx.extractMessageFromData(data, api);
+        if (Array.isArray(result)) result = result.filter(part => !part.type || part.type === 'text').map(part => part.text || '').join('');
+        if (typeof result !== 'string') throw new InvalidModelOutputError('Connection Profile returned no summary text');
+        if (api === 'textgenerationwebui') result = await cleanProfileText(result, profile);
+        return { text: requireModelOutput(result, raw), ...providerUsage(raw), ...providerUsage(data) };
     } catch (error) {
-        if (error instanceof ConnectionError) throw error;
-
-        const msg = error?.message || String(error);
-        const status = error?.status || error?.response?.status;
-
-        if (status === 401 || msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
-            throw new ConnectionError(
-                `Connection Profile auth failed (401). This is likely the API key switching bug ` +
-                `(ST Issue #5348). Update SillyTavern to staging (March 30, 2026+) to fix this. ` +
-                `Original error: ${msg}`,
-                { retryable: false, status: 401 }
-            );
+        if (error instanceof ConnectionError || error instanceof InvalidModelOutputError || signal?.aborted) throw error;
+        // ST wraps provider errors in Error.cause. Preserve the actual diagnosis.
+        const messages = [];
+        let status = null;
+        for (let cause = error, depth = 0; cause && depth < 5; cause = cause.cause, depth++) {
+            if (cause.message && !messages.includes(cause.message)) messages.push(cause.message);
+            status ??= cause.status ?? cause.response?.status ?? null;
         }
-
-        if (msg.includes('not found') || msg.includes('profile')) {
-            throw new ConnectionError(
-                `Connection Profile "${profileId}" not found. It may have been deleted. ` +
-                `Please re-select a profile in Summaryception settings.`,
-                { retryable: false, status: 404 }
-            );
-        }
-
-        throw new ConnectionError(
-            `Connection Profile request failed: ${msg}`,
-            { retryable: true, status: status }
-        );
+        const message = messages.join(': ') || String(error);
+        const code = message.match(/\b(400|401|403|404|408|409|422|429|5\d\d)\b/);
+        status ??= code ? Number(code[1]) : /unauthorized|invalid api key|authentication failed/i.test(message) ? 401 : null;
+        throw new ConnectionError(`Connection Profile request failed: ${message}`, {
+            status, retryable: status === null || status === 408 || status === 429 || status >= 500,
+        });
     }
 }
 
@@ -288,7 +263,8 @@ async function sendViaProfile(profileId, systemPrompt, userPrompt) {
  * Send a request to a local Ollama instance using /api/chat.
  * Routes through ST's CORS proxy to avoid browser CORS restrictions.
  */
-async function sendViaOllama(url, model, systemPrompt, userPrompt) {
+async function sendViaOllama(url, model, systemPrompt, userPrompt, signal) {
+    signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
             'Ollama URL is not configured. Please set it in Summaryception settings.',
@@ -308,6 +284,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
     let response;
     try {
         response = await fetch(proxiedUrl(targetUrl), {
+            signal,
             method: 'POST',
             headers: {
                 ...getProxyHeaders(),
@@ -326,9 +303,11 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
             }),
         });
     } catch (proxyError) {
+        if (signal?.aborted) throw proxyError;
         console.warn(`${MODULE_NAME} CORS proxy failed, trying direct:`, proxyError.message);
         try {
             response = await fetch(targetUrl, {
+                signal,
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -342,6 +321,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
                 }),
             });
         } catch (directError) {
+            if (signal?.aborted) throw directError;
             throw new ConnectionError(
                 `Failed to connect to Ollama at ${baseUrl}. ` +
                 `CORS proxy error: ${proxyError.message}. Direct error: ${directError.message}. ` +
@@ -361,14 +341,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
 
     const data = await response.json();
 
-    if (!data?.message?.content) {
-        throw new ConnectionError(
-            'Ollama returned an empty or invalid response.',
-            { retryable: true }
-        );
-    }
-
-    return data.message.content;
+    return { text: requireModelOutput(data?.message?.content ?? '', data), ...providerUsage(data) };
 }
 
 /**
@@ -430,7 +403,8 @@ export async function fetchOllamaModels(url) {
  * Routes through ST's CORS proxy for local endpoints.
  * Cloud endpoints skip the proxy since they have CORS headers.
  */
-async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens) {
+async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal) {
+    signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
             'OpenAI Compatible URL is not configured. Please set it in Summaryception settings.',
@@ -478,6 +452,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         ],
         temperature: LLM_DEFAULTS.openaiTemperature,
         stream: true,
+        stream_options: { include_usage: true },
     };
 
     // Only include max_tokens if explicitly set
@@ -491,19 +466,23 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     if (isLocal) {
         try {
             response = await fetch(proxiedUrl(endpoint), {
+                signal,
                 method: 'POST',
                 headers: { ...getProxyHeaders(), ...headers },
                                    body: body,
             });
         } catch (proxyError) {
+            if (signal?.aborted) throw proxyError;
             console.warn(`${MODULE_NAME} CORS proxy failed for OpenAI endpoint, trying direct:`, proxyError.message);
             try {
                 response = await fetch(endpoint, {
+                    signal,
                     method: 'POST',
                     headers: headers,
                     body: body,
                 });
             } catch (directError) {
+                if (signal?.aborted) throw directError;
                 throw new ConnectionError(
                     `Failed to connect to ${baseUrl}. ` +
                     `Enable the CORS proxy in config.yaml (enableCorsProxy: true). ` +
@@ -515,11 +494,13 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     } else {
         try {
             response = await fetch(endpoint, {
+                signal,
                 method: 'POST',
                 headers: headers,
                 body: body,
             });
         } catch (directError) {
+            if (signal?.aborted) throw directError;
             throw new ConnectionError(
                 `Failed to connect to ${baseUrl}: ${directError.message}`,
                 { retryable: true }
@@ -552,7 +533,25 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let fullContent = '';
+    let usage = {};
+    let completed = false;
     let buffer = '';
+
+    function readLine(line) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) return;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') { completed = true; return; }
+        let parsed;
+        try { parsed = JSON.parse(data); } catch { return; }
+        if (parsed.usage) usage = providerUsage(parsed);
+        if (parsed.choices?.[0]?.finish_reason) completed = true;
+        if (hasProviderRefusal(parsed)) {
+            throw new InvalidModelOutputError('the provider reported a refusal or content filter');
+        }
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (typeof delta === 'string') fullContent += delta;
+    }
 
     try {
         while (true) {
@@ -567,35 +566,20 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed || !trimmed.startsWith('data:')) continue;
-
-                const data = trimmed.slice(5).trim();
-                if (data === '[DONE]') continue;
-
-                try {
-                    const parsed = JSON.parse(data);
-                    const delta = parsed.choices?.[0]?.delta?.content;
-                    if (delta) {
-                        fullContent += delta;
-                    }
-                } catch (e) {
-                    // Skip unparseable chunks (comments, keep-alive, etc.)
-                }
+                readLine(line);
             }
         }
+        buffer += decoder.decode();
+        if (buffer.trim()) readLine(buffer);
+    } catch (error) {
+        await reader.cancel().catch(() => {});
+        throw error;
     } finally {
         reader.releaseLock();
     }
 
-    if (!fullContent.trim()) {
-        throw new ConnectionError(
-            'OpenAI Compatible endpoint returned an empty response (streaming).',
-                                  { retryable: true }
-        );
-    }
-
-    return fullContent;
+    if (!completed) throw new ConnectionError('OpenAI stream ended before generation completed. Summary not saved.', { retryable: true });
+    return { text: requireModelOutput(fullContent), ...usage };
 }
 
 /**
@@ -617,7 +601,7 @@ export async function testOpenAIConnection(url, apiKey, model) {
         );
         return {
             success: true,
-            message: `Connection successful! Response: "${result.substring(0, LLM_DEFAULTS.testPreviewLength)}"`,
+            message: `Connection successful! Response: "${result.text.substring(0, LLM_DEFAULTS.testPreviewLength)}"`,
         };
     } catch (error) {
         return {
@@ -630,30 +614,47 @@ export async function testOpenAIConnection(url, apiKey, model) {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /**
- * Populate a <select> element with connection profiles using ST's built-in handler.
+ * Show live ST profiles and track native create/update/delete events.
  * @param {HTMLSelectElement} selectElement - The dropdown to populate
  * @param {string} currentValue - The currently selected profile ID
  * @returns {boolean} - Whether population succeeded
  */
-export function populateProfileDropdown(selectElement, currentValue) {
-    try {
-        const context = SillyTavern.getContext();
-        const service = context.ConnectionManagerRequestService;
-
-        if (service && typeof service.handleDropdown === 'function') {
-            service.handleDropdown(selectElement);
-            if (currentValue) {
-                selectElement.value = currentValue;
-            }
-            return true;
+export function populateProfileDropdown(selectElement, currentValue, onChange = () => {}) {
+    const context = SillyTavern.getContext();
+    const service = context.ConnectionManagerRequestService;
+    if (!service || !context.extensionSettings.connectionManager) return false;
+    const render = selectedId => {
+        const profiles = context.extensionSettings.connectionManager.profiles || [];
+        selectElement.replaceChildren();
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '-- Select a Profile --';
+        selectElement.appendChild(placeholder);
+        for (const profile of [...profiles].sort((a, b) => a.name.localeCompare(b.name))) {
+            if (service.isProfileSupported && !service.isProfileSupported(profile)) continue;
+            const option = document.createElement('option');
+            option.value = profile.id;
+            option.textContent = profile.name;
+            selectElement.appendChild(option);
         }
-
-        console.warn(`${MODULE_NAME} handleDropdown not available.`);
-        return false;
-    } catch (error) {
-        console.error(`${MODULE_NAME} Error populating profile dropdown:`, error);
-        return false;
-    }
+        selectElement.value = selectedId || '';
+    };
+    render(currentValue);
+    selectElement.addEventListener('change', () => onChange(selectElement.value));
+    const events = context.eventTypes || context.event_types;
+    const refresh = () => render(selectElement.value);
+    context.eventSource.on(events.CONNECTION_PROFILE_CREATED, refresh);
+    context.eventSource.on(events.CONNECTION_PROFILE_UPDATED, (oldProfile, newProfile) => {
+        const previous = selectElement.value;
+        render(previous === oldProfile.id ? newProfile.id : previous);
+        if (selectElement.value !== previous) onChange(selectElement.value);
+    });
+    context.eventSource.on(events.CONNECTION_PROFILE_DELETED, profile => {
+        const selected = selectElement.value === profile.id;
+        render(selected ? '' : selectElement.value);
+        if (selected) onChange('');
+    });
+    return true;
 }
 
 /**
