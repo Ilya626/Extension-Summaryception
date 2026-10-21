@@ -1,6 +1,12 @@
-# Local version 5.5.4-local.11
+# Local version 5.5.4-local.12
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.12 finish streaming without waiting for HTTP EOF
+
+The SSE reader previously recognized `[DONE]` and final `finish_reason`, but still awaited the next HTTP read until EOF. A complete response could therefore be discarded by the 120-second timer while its HTTP body remained open. It now stops at `[DONE]`, or after a finish reason and usage; it allows one bounded two-second grace for optional trailing usage and cancels the remaining transport without awaiting shutdown. Keepalive events cannot renew the grace. Partial streams without a completion marker are still rejected. The 120-second request timeout is unchanged.
+
+Verified over real native ST transport with a provider deliberately keeping its body open for ten seconds: the previous reader aborted at a 1.5-second probe deadline despite having the complete response; the corrected reader completed in 124–132 ms and retained 37 provider tokens. Finish reason without usage completed in 2.02 seconds despite periodic keepalives; premature EOF was rejected. All 57 existing tests pass.
 
 ## local.11 OpenAI Compatible server transport
 

@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.11**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.12**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
@@ -74,6 +74,8 @@ Manual edits, Regenerate and Refine in deeper layers replace the compression sou
 The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion and all insertion positions. Temporary scan state is restored afterward.
 
 The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting/retries, saving and the actual failure message. Stop reports a cancellation request while the active step finishes; it does not claim completion prematurely.
+
+OpenAI streaming finishes at `[DONE]`, or once a final `finish_reason` and usage have arrived. It does not wait for the HTTP connection to close after completion. If usage is omitted after a final finish reason, a single two-second grace permits a trailing usage event; subsequent keepalives do not extend that grace. A stream cut off before a completion marker is rejected. The overall request timeout remains 120 seconds.
 
 ## Source messages and visibility
 

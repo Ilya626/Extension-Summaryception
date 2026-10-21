@@ -29,6 +29,7 @@ const LLM_DEFAULTS = Object.freeze({
     openaiTemperature:    0.8,    // Slightly creative for narrative flow
     testMaxTokens:        100,    // Small ceiling for the "Test Connection" probe
     testPreviewLength:    100,    // Characters of response shown in test result toast
+    streamTrailerWait:  2_000,    // Grace for optional usage after finish_reason
 });
 
 // ─── Custom Error Class ──────────────────────────────────────────────
@@ -498,17 +499,23 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     let fullContent = '';
     let usage = {};
     let completed = false;
+    let doneEvent = false;
+    let transportEnded = false;
+    let trailerDeadline = 0;
     let buffer = '';
 
     function readLine(line) {
         const trimmed = line.trim();
         if (!trimmed.startsWith('data:')) return;
         const data = trimmed.slice(5).trim();
-        if (data === '[DONE]') { completed = true; return; }
+        if (data === '[DONE]') { completed = true; doneEvent = true; return; }
         let parsed;
         try { parsed = JSON.parse(data); } catch { return; }
         if (parsed.usage) usage = providerUsage(parsed);
-        if (parsed.choices?.[0]?.finish_reason) completed = true;
+        if (parsed.choices?.[0]?.finish_reason) {
+            if (!completed) trailerDeadline = Date.now() + LLM_DEFAULTS.streamTrailerWait;
+            completed = true;
+        }
         if (hasProviderRefusal(parsed)) {
             throw new InvalidModelOutputError('the provider reported a refusal or content filter');
         }
@@ -517,9 +524,24 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
     }
 
     try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+        while (!doneEvent && !(completed && Number.isFinite(usage.tokenCount))) {
+            if (completed && Date.now() >= trailerDeadline) break;
+            let timer;
+            let packet;
+            try {
+                // A valid finish_reason completes the text. Usage may arrive
+                // in a following event, but a lingering HTTP body must not
+                // turn an already completed generation into a 120s timeout.
+                packet = completed ? await Promise.race([
+                    reader.read(),
+                    new Promise(resolve => { timer = setTimeout(() => resolve({ trailerTimedOut: true }), Math.max(0, trailerDeadline - Date.now())); }),
+                ]) : await reader.read();
+            } finally {
+                clearTimeout(timer);
+            }
+            if (packet.trailerTimedOut) break;
+            const { done, value } = packet;
+            if (done) { transportEnded = true; break; }
 
             buffer += decoder.decode(value, { stream: true });
 
@@ -530,17 +552,21 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
 
             for (const line of lines) {
                 readLine(line);
+                if (doneEvent) break;
             }
+            // Some compatible providers omit the newline after [DONE].
+            if (buffer.trim() === 'data: [DONE]') { readLine(buffer); buffer = ''; }
         }
         buffer += decoder.decode();
-        if (buffer.trim()) readLine(buffer);
-    } catch (error) {
-        await reader.cancel().catch(() => {});
-        throw error;
+        if (!doneEvent && buffer.trim()) readLine(buffer);
     } finally {
+        // Do not await transport shutdown after a protocol-level completion.
+        // Cancellation also releases a pending trailer read after its grace.
+        if (!transportEnded) void reader.cancel().catch(() => {});
         reader.releaseLock();
     }
 
+    signal?.throwIfAborted();
     if (!completed) throw new ConnectionError('OpenAI stream ended before generation completed. Summary not saved.', { retryable: true });
     return { text: requireModelOutput(fullContent), ...usage };
 }
