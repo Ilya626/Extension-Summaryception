@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.12**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.13**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
@@ -73,9 +73,9 @@ Manual edits, Regenerate and Refine in deeper layers replace the compression sou
 
 The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion and all insertion positions. Temporary scan state is restored afterward.
 
-The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting/retries, saving and the actual failure message. Stop reports a cancellation request while the active step finishes; it does not claim completion prematurely.
+The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting, saving and the actual failure message. Each operation sends one request; errors are reported immediately without automatic retries. Stop cancels the active request; token planning checks cancellation between exchanges. Switching chats also cancels the old operation.
 
-OpenAI streaming finishes at `[DONE]`, or once a final `finish_reason` and usage have arrived. It does not wait for the HTTP connection to close after completion. If usage is omitted after a final finish reason, a single two-second grace permits a trailing usage event; subsequent keepalives do not extend that grace. A stream cut off before a completion marker is rejected. The overall request timeout remains 120 seconds.
+OpenAI streaming finishes at `[DONE]`, or once a final `finish_reason` and usage have arrived. It does not wait for the HTTP connection to close after completion. If usage is omitted after a final finish reason, a single two-second grace permits a trailing usage event; subsequent keepalives do not extend that grace. A stream cut off before a completion marker is rejected. The timeout is 120 seconds without incoming response data: it starts when the request is sent, resets when response headers arrive, then resets on every received stream chunk, including keepalives. An active stream has no total-duration limit.
 
 ## Source messages and visibility
 
@@ -85,7 +85,7 @@ Deleting a summary releases messages with no remaining summary. Automatic hiding
 
 Empty outputs, model refusals and provider content-filter responses are rejected. Invalid assistant replies do not count toward the trigger. Failed initial generation leaves memory and visibility unchanged. Failed compression retains the already saved new summary and stops transfers; it does not delete that summary or request its source messages again.
 
-Summary insertion uses standard ST positions: None, Before Main Prompt / Story String, After Main Prompt / Story String, or In-chat @ Depth, with role and scan settings.
+Memory position uses plain labels and order examples: before system/setup; after system/setup, before chat; after the conversation; or inside the conversation at a chosen distance. These map to ST's native Main Prompt / Story String and In-chat @ Depth positions. After the conversation means depth 0; other extensions or final preset instructions may still follow. ST has no native always-last position. The selected role controls who sends the memory, independently of its position.
 
 ## Compatibility and verification
 

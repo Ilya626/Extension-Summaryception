@@ -22,6 +22,7 @@ export function ensureSummarySources(store, chat) {
     for (const message of chat) sourceId(message);
     for (const snippet of snippets(store)) {
         snippet.id ??= newId();
+        if (snippet.sourceStatus === 'unlinked') continue;
         if (!Array.isArray(snippet.sourceMessageIds) && snippet.turnRange) {
             const [start, end] = snippet.turnRange;
             snippet.sourceMessageIds = chat.slice(start, end + 1).filter(canSummarizeMessage).map(sourceId);
@@ -29,7 +30,7 @@ export function ensureSummarySources(store, chat) {
             snippet.sourceStatus = 'inferred';
         }
     }
-    const unknown = snippets(store).some(snippet => !Array.isArray(snippet.sourceMessageIds));
+    const unknown = snippets(store).some(snippet => snippet.sourceStatus !== 'unlinked' && !Array.isArray(snippet.sourceMessageIds));
     if (unknown && !Array.isArray(store.legacySourceIds)) {
         store.legacySourceIds = chat.slice(0, Math.max(0, store.summarizedUpTo + 1)).map(sourceId);
     }
@@ -84,7 +85,8 @@ export function mergedSources(children) {
         id: newId(),
         ...(known ? { sourceMessageIds: [...new Set(children.flatMap(snippet => snippet.sourceMessageIds))] } : {}),
         sourceSummaryIds: children.map(snippet => snippet.id),
-        sourceStatus: known && children.every(snippet => snippet.sourceStatus === 'exact') ? 'exact' : 'inferred',
+        sourceStatus: known ? (children.every(snippet => snippet.sourceStatus === 'exact') ? 'exact' : 'inferred')
+            : children.some(snippet => snippet.sourceStatus === 'unlinked') ? 'unlinked' : 'inferred',
     };
 }
 

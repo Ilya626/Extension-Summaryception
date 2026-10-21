@@ -1,6 +1,18 @@
-# Local version 5.5.4-local.12
+# Local version 5.5.4-local.13
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.13 request simplification and addon audit
+
+- Replaced the multi-attempt request loop with one cancellable request. Errors surface immediately. OpenAI's 120-second timeout now measures inactivity: response headers and every incoming stream chunk reset it. There is no total-duration deadline for an active stream. Protocol completion still ends reading without waiting for HTTP EOF.
+- Removed global prompt-toggle manipulation from native raw requests. Provider errors inside SSE and JSON replies retain their actual diagnosis.
+- Chat changes cancel the active request; source-token planning checks Stop between exchanges. Removed the artificial Stop-button cooldown and the extra token cache; ST owns tokenizer caching.
+- Disabling restores automatically hidden messages before removing injected memory, while preserving manual hiding. UI and slash-command Clear share one operation; a context-restoration failure keeps the memory.
+- Every completed layer transition is saved immediately. A later refusal or full L4 keeps already completed work and the new L0 summary.
+- Foreign imported memories remain available as explicitly unlinked memory after reload; they cannot claim unrelated current-chat messages as sources.
+- Memory position has plain English labels, order examples and a direct After the conversation option. Depth and message role are explained separately. No unsupported always-last promise is made.
+
+Verification: all 57 existing tests pass. Mobile Edge and native ST transport verified continuous streaming beyond an accelerated 400 ms inactivity interval, cancellation after silence, one request per operation, unchanged memory after cancellation, and direct provider-error reporting. The production interval remains 120,000 ms. Desktop/mobile placement was inspected visually; native injection used position 1/depth 0. Disabling preserved manual hiding, Clear removed memory, and a foreign import survived reopening the same chat after reload. No new test cases or gating framework were added.
 
 ## local.12 finish streaming without waiting for HTTP EOF
 

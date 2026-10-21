@@ -1,6 +1,5 @@
 import { collectPassage, pendingSourceIds, sourceId } from './summary-sources.js';
 
-const tokenCache = new WeakMap();
 const positive = (value, fallback) => Math.max(1, Math.floor(Number(value) || fallback));
 
 /** One exchange starts with user messages and includes their following assistant replies. */
@@ -29,30 +28,27 @@ export function blindZoneStart(chat, settings) {
     return count && completed.length ? completed[Math.max(0, completed.length - count)].indices[0] : trailingStart;
 }
 
-async function measure(text, anchor) {
+async function measure(text) {
     const ctx = SillyTavern.getContext();
-    const model = ctx.getTokenizerModel?.() ?? ctx.mainApi ?? 'default';
-    const previous = tokenCache.get(anchor);
-    if (previous?.text === text && previous.model === model && previous.tokenizer === ctx.getTokenCountAsync) return previous;
     const count = typeof ctx.getTokenCountAsync === 'function' ? await ctx.getTokenCountAsync(text) : Math.ceil(text.length / 4);
-    const result = { text, model, tokenizer: ctx.getTokenCountAsync, tokens: Math.max(1, Number(count) || 1),
+    return { tokens: Math.max(1, Number(count) || 1),
         estimated: typeof ctx.getTokenCountAsync !== 'function' };
-    tokenCache.set(anchor, result);
-    return result;
 }
 
 /** Blind exchanges are removed before tokenization, retention and batching. */
-export async function planRawContext(chat, store, settings) {
+export async function planRawContext(chat, store, settings, stopped = () => false) {
     const covered = pendingSourceIds(store);
     const groups = chatExchanges(chat).filter(group => group.hasAssistant);
     const blindStart = blindZoneStart(chat, settings);
     const eligible = [];
     for (const group of groups) {
+        if (stopped()) return { ready: false, hasBatch: false, batchCount: 0 };
         if (group.indices[0] >= blindStart) continue;
         const indices = group.indices.filter(index => !chat[index].is_system && !covered.has(sourceId(chat[index])));
         const passage = collectPassage(chat, indices);
         if (!passage.indices.some(index => !chat[index].is_user)) continue;
-        const measured = await measure(passage.text, chat[group.indices[0]]);
+        const measured = await measure(passage.text);
+        if (stopped()) return { ready: false, hasBatch: false, batchCount: 0 };
         eligible.push({ ...passage, tokens: measured.tokens, estimated: measured.estimated });
     }
     const retainedBudget = positive(settings.retainedContextTokens, 12000);

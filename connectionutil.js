@@ -35,10 +35,7 @@ const LLM_DEFAULTS = Object.freeze({
 // ─── Custom Error Class ──────────────────────────────────────────────
 
 /**
- * Error class for connection errors with explicit retryable flag.
- * The retry logic in callSummarizer checks for this to avoid
- * burning through retries on errors that will never succeed
- * (e.g. missing config, auth failures, deleted profiles).
+ * Connection errors retain provider status and compatibility metadata.
  */
 class ConnectionError extends Error {
     constructor(message, { retryable = false, status = null } = {}) {
@@ -89,7 +86,7 @@ function getProxyHeaders() {
  * @returns {Promise<string>} - The generated response text
  * @throws {ConnectionError|Error} - If the request fails
  */
-export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, { signal, returnDetails = false } = {}) {
+export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, { signal, returnDetails = false, onActivity } = {}) {
     const source = settings.connectionSource || 'default';
     let result;
     switch (source) {
@@ -100,7 +97,7 @@ export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, 
             result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal);
             break;
         case 'openai':
-            result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal);
+            result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal, onActivity);
             break;
         case 'default':
         default:
@@ -404,7 +401,7 @@ export async function fetchOllamaModels(url) {
  * Uses ST's native Custom OpenAI backend for every endpoint. Providers do not
  * need browser CORS support and credentials stay off cross-origin requests.
  */
-async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal) {
+async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTokens, signal, onActivity) {
     signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
@@ -471,6 +468,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         if (signal?.aborted) throw error;
         throw new ConnectionError(`Could not reach the SillyTavern backend: ${error.message}`, { retryable: true });
     }
+    onActivity?.();
 
     if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
@@ -492,6 +490,13 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         );
     }
 
+    if (response.headers.get('content-type')?.includes('application/json')) {
+        const data = await response.json();
+        if (data.error) throw new ConnectionError(data.error.message || String(data.error));
+        const text = data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
+        return { text: requireModelOutput(text, data), ...providerUsage(data) };
+    }
+
     // ─── Stream reading ──────────────────────────────────────────
     // Read SSE chunks and assemble the full response content.
     const reader = response.body.getReader();
@@ -511,6 +516,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         if (data === '[DONE]') { completed = true; doneEvent = true; return; }
         let parsed;
         try { parsed = JSON.parse(data); } catch { return; }
+        if (parsed.error) throw new ConnectionError(parsed.error.message || String(parsed.error));
         if (parsed.usage) usage = providerUsage(parsed);
         if (parsed.choices?.[0]?.finish_reason) {
             if (!completed) trailerDeadline = Date.now() + LLM_DEFAULTS.streamTrailerWait;
@@ -542,6 +548,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
             if (packet.trailerTimedOut) break;
             const { done, value } = packet;
             if (done) { transportEnded = true; break; }
+            if (value?.byteLength) onActivity?.();
 
             buffer += decoder.decode(value, { stream: true });
 

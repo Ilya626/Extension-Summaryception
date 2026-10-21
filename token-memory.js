@@ -78,8 +78,8 @@ export async function prepareTokenMemory(store) {
     pruneArchive(store);
 }
 
-/** Mutates only a caller-owned draft; caller commits after every transition succeeds. */
-export async function rebalanceMemory(store, settings, summarize, mergeSources) {
+/** Mutates a caller-owned draft and optionally publishes each completed transition. */
+export async function rebalanceMemory(store, settings, summarize, mergeSources, onTransition = null) {
     await prepareTokenMemory(store);
     const budgets = layerBudgets(settings);
     if (store.layers.slice(LAYER_COUNT).some(layer => layer?.length)) throw new Error('Legacy layers beyond L4 must be exported and rebuilt before token migration.');
@@ -119,6 +119,7 @@ export async function rebalanceMemory(store, settings, summarize, mergeSources) 
             (store.layers[i + 1] ??= []).push({ ...result, ...mergeSources(children), l0SourceIds: ids,
                 originalL0Tokens: originalTokens, ...(overrides.length ? { compressionOverrides: overrides } : {}),
                 fromLayer: i, mergedCount: children.length, timestamp: Date.now() });
+            await onTransition?.(store);
         }
     }
     pruneArchive(store);

@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.12 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.13 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -24,7 +24,7 @@ import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.12';
+const RUNTIME_VERSION = '5.5.4-local.13';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -34,15 +34,7 @@ const LOG_PREFIX = '[Summaryception]';
 // ═══════════════════════════════════════════════════════════════════════
 
 const TUNING = Object.freeze({
-
-    // ── Retry / Resilience ─────────────────────────────────────────
-    maxRetries:               5,        // LLM call retry attempts before giving up
-    retryBaseDelay:           2_000,    // ms — initial back-off delay
-    retryMaxDelay:            60_000,   // ms — ceiling for exponential back-off
-    retryBackoffMultiplier:   2,        // exponential growth factor
-    retryableStatuses:        [429, 500, 502, 503, 504],
-    llmRequestTimeout:        120_000,  // ms — per-request hard timeout
-
+    requestIdleTimeout: 120_000,
     // ── Backlog / Catchup ──────────────────────────────────────────
     backlogMultiplier:        2,        // eligible tokens > batch budget × this triggers catchup dialog
 
@@ -63,19 +55,7 @@ const TUNING = Object.freeze({
 
     // ── Connection UI ──────────────────────────────────────────────
     connectionStatusTimeout:  8_000,    // ms — auto-hide the status indicator
-    stopButtonCooldown:       2_000,    // ms — brief disable after clicking Stop
 });
-
-// Legacy alias — keeps RETRY_CONFIG references readable without a noisy diff.
-const RETRY_CONFIG = Object.freeze({
-    maxRetries:         TUNING.maxRetries,
-    baseDelay:          TUNING.retryBaseDelay,
-    maxDelay:           TUNING.retryMaxDelay,
-    backoffMultiplier:  TUNING.retryBackoffMultiplier,
-    retryableStatuses:  TUNING.retryableStatuses,
-});
-
-// ─── Default Settings ────────────────────────────────────────────────
 
 const LEGACY_DEFAULT_USER_PROMPT = `<player_name>
 {{player_name}}
@@ -245,46 +225,6 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function parseRetryAfter(error) {
-    try {
-        const retryAfter = error?.response?.headers?.['retry-after']
-            || error?.retryAfter
-            || error?.data?.retry_after;
-        if (!retryAfter) return null;
-        const seconds = Number(retryAfter);
-        if (!isNaN(seconds)) return seconds * 1000;
-        const date = new Date(retryAfter);
-        if (!isNaN(date.getTime())) {
-            return Math.max(0, date.getTime() - Date.now());
-        }
-    } catch (e) { /* ignore */ }
-    return null;
-}
-
-function isRetryableError(error) {
-    if (error?.name === 'AbortError') return false;
-
-    // ConnectionError from connectionutil.js carries an explicit retryable flag.
-    if (error?.name === 'ConnectionError' && typeof error.retryable === 'boolean') {
-        return error.retryable;
-    }
-
-    if (error?.name === 'TypeError' && error?.message?.includes('fetch')) return true;
-    const status = error?.status || error?.response?.status || error?.statusCode;
-    if (status && RETRY_CONFIG.retryableStatuses.includes(status)) return true;
-    const msg = (error?.message || error?.toString() || '').toLowerCase();
-    if (msg.includes('rate limit')) return true;
-    if (msg.includes('too many requests')) return true;
-    if (msg.includes('server error')) return true;
-    if (msg.includes('timeout')) return true;
-    if (msg.includes('econnreset')) return true;
-    if (msg.includes('econnrefused')) return true;
-    if (msg.includes('network')) return true;
-    if (msg.includes('overloaded')) return true;
-    if (msg.includes('capacity')) return true;
-    return false;
-}
-
 function log(...args) {
     if (getSettings().debugMode) console.log(LOG_PREFIX, ...args);
 }
@@ -387,6 +327,20 @@ async function unghostAllMessages() {
     getChatStore().ghostedIndices = [];
 }
 
+async function clearMemory() {
+    await unghostAllMessages();
+    const store = getChatStore();
+    store.layers = [];
+    store.l0Archive = {};
+    delete store.skippedMessageIds;
+    delete store.legacySourceIds;
+    store.summarizedUpTo = -1;
+    store.ghostedIndices = [];
+    await saveChatStore();
+    updateInjection();
+    updateUI();
+}
+
 async function applyGhostingAfterSummary(chat, indices) {
     const settings = getSettings();
     const covered = coveredSourceIds(getChatStore());
@@ -485,83 +439,8 @@ function buildFullContext(downToLayer = 0) {
     return parts.length > 0 ? parts.join(' ') : '(none yet)';
 }
 
-// ─── Prompt Toggle Management ────────────────────────────────────────
+// Output cleaning
 
-function snapshotPromptToggles() {
-    const snapshot = new Map();
-    try {
-        const ctx = SillyTavern.getContext();
-        const promptManager = ctx.promptManager;
-        if (!promptManager) {
-            log('No prompt manager available, skipping toggle snapshot.');
-            return snapshot;
-        }
-        const collection = promptManager.getPromptCollection();
-        if (!collection?.collection) return snapshot;
-        const orderList = promptManager.getPromptOrderEntries();
-        if (!orderList) return snapshot;
-        for (const entry of collection.collection) {
-            for (const orderEntry of orderList) {
-                if (orderEntry.identifier === entry.identifier) {
-                    snapshot.set(entry.identifier, orderEntry.enabled);
-                }
-            }
-        }
-        log(`Snapshot captured: ${snapshot.size} prompt toggles`);
-    } catch (e) {
-        log('Error capturing snapshot:', e);
-    }
-    return snapshot;
-}
-
-function disableAllPromptToggles() {
-    try {
-        const ctx = SillyTavern.getContext();
-        const promptManager = ctx.promptManager;
-        if (!promptManager) return;
-        const orderList = promptManager.getPromptOrderEntries();
-        if (!orderList) return;
-        let count = 0;
-        for (const entry of orderList) {
-            if (entry.enabled) {
-                entry.enabled = false;
-                count++;
-            }
-        }
-        log(`Disabled ${count} prompt toggles`);
-    } catch (e) {
-        log('Error disabling prompt toggles:', e);
-    }
-}
-
-function restorePromptToggles(snapshot) {
-    if (!snapshot || snapshot.size === 0) return;
-    try {
-        const ctx = SillyTavern.getContext();
-        const promptManager = ctx.promptManager;
-        if (!promptManager) return;
-        const orderList = promptManager.getPromptOrderEntries();
-        if (!orderList) return;
-        let count = 0;
-        for (const entry of orderList) {
-            if (snapshot.has(entry.identifier)) {
-                entry.enabled = snapshot.get(entry.identifier);
-                count++;
-            }
-        }
-        log(`Restored ${count} prompt toggles`);
-    } catch (e) {
-        log('Error restoring prompt toggles:', e);
-    }
-}
-
-// ─── Output Cleaning ─────────────────────────────────────────────────
-
-/**
- * Strip reasoning tags, thinking blocks, and other model artifacts
- * from the summarizer output. Uses configurable patterns plus
- * regex for common reasoning block formats.
- */
 function cleanSummarizerOutput(raw) {
     let text = stripReasoningBlocks(raw);
 
@@ -595,6 +474,16 @@ function setSummaryStatus(message, state = 'working') {
     $('#sc_request_status').text(message).attr('data-state', state);
 }
 
+function waitForRequest(request, signal) {
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+        onAbort = () => reject(signal.reason || new Error('Request stopped'));
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+    });
+    return Promise.race([request, aborted]).finally(() => signal.removeEventListener('abort', onAbort));
+}
+
 function abortSummarization() {
     summarizationStopRequested = true;
     if (isSummarizing) setSummaryStatus(`Stop requested. Waiting for the active step: ${summaryStatus.message}`, 'warning');
@@ -605,7 +494,7 @@ function abortSummarization() {
     }
 }
 
-// ─── Core: LLM Summarization with Retry ──────────────────────────────
+// ─── Core: LLM Summarization ──────────────────────────────
 
 async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
     trace('>>> ENTERING callSummarizer');
@@ -632,171 +521,61 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
     log('Context str length:', contextStr.length, 'chars');
     log('Story txt length:', storyTxt.length, 'chars');
 
-    const isDefaultMode = !s.connectionSource || s.connectionSource === 'default';
-    const snapshot = isDefaultMode ? snapshotPromptToggles() : null;
-    if (isDefaultMode) disableAllPromptToggles();
-
-    currentAbortController = new AbortController();
-    if (summarizationStopRequested) currentAbortController.abort();
-    const { signal } = currentAbortController;
-
-    let lastError = null;
-
+    const controller = new AbortController();
+    currentAbortController = controller;
+    const { signal } = controller;
+    if (summarizationStopRequested) controller.abort();
+    let phase = 'Summary request';
+    let idleTimer;
+    let timedOut = false;
+    const onActivity = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+            timedOut = true;
+            controller.abort(new Error('No response data received for 120 seconds'));
+        }, TUNING.requestIdleTimeout);
+    };
     try {
+        signal.throwIfAborted();
         if (s.summarizerWorldInfo) {
-            try {
-                setSummaryStatus('Scanning World Info. The model request has not been sent yet.');
-                const worldInfo = await collectSummaryWorldInfo(storyTxt, [contextStr, existingSummary].filter(Boolean).join('\n'));
-                prompt = attachSummaryWorldInfo(prompt, worldInfo);
-                log('Summary World Info:', worldInfo.length, 'chars');
-            } catch (error) {
-                setSummaryStatus(`World Info scan failed: ${error.message}`, 'error');
-                console.error(LOG_PREFIX, 'World Info scan failed:', error);
-                toastr.warning(`Summary skipped: World Info scan failed (${error.message}). Memory and message context were kept.`, 'Summaryception', { timeOut: TUNING.toastError });
-                return '';
-            }
+            phase = 'World Info scan';
+            setSummaryStatus('Scanning World Info.');
+            const worldInfo = await collectSummaryWorldInfo(storyTxt, [contextStr, existingSummary].filter(Boolean).join('\n'));
+            prompt = attachSummaryWorldInfo(prompt, worldInfo);
         }
-        for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
-            trace(`  Attempt ${attempt} starting...`);
-
-            if (signal.aborted) {
-                setSummaryStatus('Stopped. No summary result was applied.', 'idle');
-                log('Summarization aborted by user.');
-                toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
-                return '';
-            }
-
-            try {
-                if (attempt > 0) {
-                    log(`Retry attempt ${attempt}/${RETRY_CONFIG.maxRetries}`);
-                }
-
-                trace(`  About to call sendSummarizerRequest with:`, {
-                    connectionSource: s.connectionSource,
-                    summarizerSystemPrompt: s.summarizerSystemPrompt?.substring(0, 50),
-                    promptLength: prompt.length,
-                });
-
-                let timer;
-                let onAbort;
-                let result;
-                const requestController = new AbortController();
-                setSummaryStatus(`Waiting for ${getConnectionDisplayName(s)}. Attempt ${attempt + 1}/${RETRY_CONFIG.maxRetries + 1}; timeout ${TUNING.llmRequestTimeout / 1000}s.`);
-                const cancelRequest = () => requestController.abort();
-                signal.addEventListener('abort', cancelRequest, { once: true });
-                try {
-                    result = await Promise.race([
-                        sendSummarizerRequest(s, systemPrompt, prompt, { signal: requestController.signal, returnDetails: true }),
-                        new Promise((_, reject) => {
-                            timer = setTimeout(() => {
-                                requestController.abort();
-                                reject(new Error('Request timed out after 120s'));
-                            }, TUNING.llmRequestTimeout);
-                            onAbort = () => reject(new Error('Aborted by user'));
-                            signal.addEventListener('abort', onAbort, { once: true });
-                        }),
-                    ]);
-                } finally {
-                    clearTimeout(timer);
-                    signal.removeEventListener('abort', onAbort);
-                    signal.removeEventListener('abort', cancelRequest);
-                }
-
-                trace('  sendSummarizerRequest returned:', result?.substring?.(0, 50));
-
-                let trimmed = (result.text || '').trim();
-                trimmed = cleanSummarizerOutput(trimmed);
-
-                requireModelOutput(trimmed);
-
-                log('Result:', trimmed);
-                trace('<<< EXITING callSummarizer WITH SUCCESS');
-                setSummaryStatus('Response received. Counting summary output tokens.');
-                const summary = await countOnce({ ...result, text: trimmed });
-                return signal.aborted ? '' : summary;
-
-            } catch (err) {
-                lastError = err;
-                if (err instanceof InvalidModelOutputError) {
-                    setSummaryStatus(`Summary rejected: ${err.message}`, 'error');
-                    toastr.warning(`Summary rejected: ${err.message}. Memory and message context were kept.`, 'Summaryception', { timeOut: TUNING.toastError });
-                    return '';
-                }
-                trace(`  Caught error on attempt ${attempt}:`, {
-                    name: err?.name,
-                    message: err?.message,
-                    retryable: err?.retryable,
-                });
-
-                if (signal.aborted || err.message === 'Aborted by user') {
-                    setSummaryStatus('Stopped. No summary result was applied.', 'idle');
-                    log('Summarization aborted by user.');
-                    toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
-                    return '';
-                }
-
-                if (!isRetryableError(err)) {
-                    trace('  ERROR IS NON-RETRYABLE, BREAKING');
-                    console.error(LOG_PREFIX, 'Non-retryable error:', err);
-                    break;
-                }
-
-                if (attempt >= RETRY_CONFIG.maxRetries) {
-                    trace('  MAX RETRIES EXHAUSTED');
-                    console.error(LOG_PREFIX, `All ${RETRY_CONFIG.maxRetries} retries exhausted.`);
-                    break;
-                }
-
-                let delay;
-                const retryAfterMs = parseRetryAfter(err);
-                if (retryAfterMs) {
-                    delay = Math.min(retryAfterMs, RETRY_CONFIG.maxDelay);
-                    log(`Server requested retry after ${delay}ms`);
-                } else {
-                    const exponentialDelay = RETRY_CONFIG.baseDelay * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt);
-                    const jitter = Math.random() * RETRY_CONFIG.baseDelay;
-                    delay = Math.min(exponentialDelay + jitter, RETRY_CONFIG.maxDelay);
-                }
-
-                const delaySec = (delay / 1000).toFixed(1);
-                setSummaryStatus(`${err.message}. Retrying in ${delaySec}s.`, 'warning');
-                const status = err?.status || err?.response?.status || '?';
-
-                console.warn(LOG_PREFIX, `Attempt ${attempt + 1} failed (${status}). Retrying in ${delaySec}s...`, err.message || err);
-
-                toastr.warning(
-                    `API error (${status}). Retrying in ${delaySec}s... (${attempt + 1}/${RETRY_CONFIG.maxRetries})`,
-                    'Summaryception',
-                    { timeOut: delay }
-                );
-
-                await new Promise((resolve) => {
-                    const timer = setTimeout(resolve, delay);
-                    signal.addEventListener('abort', () => {
-                        clearTimeout(timer);
-                        resolve();
-                    });
-                });
-            }
+        signal.throwIfAborted();
+        phase = 'Summary request';
+        setSummaryStatus(`Waiting for ${getConnectionDisplayName(s)}. Timeout: 120s without response data.`);
+        onActivity();
+        const result = await waitForRequest(sendSummarizerRequest(s, systemPrompt, prompt, { signal, returnDetails: true, onActivity }), signal);
+        clearTimeout(idleTimer);
+        signal.throwIfAborted();
+        const text = cleanSummarizerOutput(result.text || '');
+        requireModelOutput(text);
+        phase = 'Summary token count';
+        setSummaryStatus('Response received. Counting summary output tokens.');
+        const summary = await countOnce({ ...result, text });
+        signal.throwIfAborted();
+        return summary;
+    } catch (error) {
+        if (timedOut) {
+            setSummaryStatus(error.message, 'error');
+            toastr.error(`${error.message}. Memory was kept.`, 'Summaryception');
+        } else if (signal.aborted || error.name === 'AbortError') {
+            setSummaryStatus('Stopped. No summary result was applied.', 'idle');
+        } else if (error instanceof InvalidModelOutputError) {
+            setSummaryStatus(`Summary rejected: ${error.message}`, 'error');
+            toastr.warning(`Summary rejected: ${error.message}. Memory and message context were kept.`, 'Summaryception', { timeOut: TUNING.toastError });
+        } else {
+            const message = `${phase} failed: ${error.message || String(error)}`;
+            setSummaryStatus(message, 'error');
+            console.error(LOG_PREFIX, message, error);
+            toastr.error(`${message}. Memory was kept.`, 'Summaryception', { timeOut: TUNING.toastError });
         }
-
-        const status = lastError?.status || lastError?.response?.status || '';
-        const failureMessage = `Summary request failed${status ? ` (${status})` : ''}: ${lastError?.message || String(lastError)}`;
-        setSummaryStatus(failureMessage, 'error');
-        console.error(LOG_PREFIX, 'Summarization failed after all retries:', lastError);
-        toastr.error(
-            `${failureMessage}. Memory was kept.`,
-            'Summaryception',
-            { timeOut: TUNING.toastError }
-        );
-        trace('<<< EXITING callSummarizer WITH FAILURE');
         return '';
-
     } finally {
-        currentAbortController = null;
-        if (isDefaultMode && snapshot) {
-            restorePromptToggles(snapshot);
-        }
+        clearTimeout(idleTimer);
+        if (currentAbortController === controller) currentAbortController = null;
     }
 }
 
@@ -815,13 +594,13 @@ async function maybeSummarizeTurns() {
         setSummaryStatus('Preparing message context and counting source tokens.');
         syncContextOverrides(chat);
         await protectBlindZone(chat);
-        const plan = await planRawContext(chat, store, settings);
+        const plan = await planRawContext(chat, store, settings, () => summarizationStopRequested);
         if (!plan.ready || summarizationStopRequested || isChatGenerating() || SillyTavern.getContext().chat !== chat || getChatStore() !== store) return;
         if (plan.availableTokens > plan.batchBudget * TUNING.backlogMultiplier && !catchupDismissed) {
             const choice = await showCatchupDialog(plan.availableTokens, plan.batchCount);
             if (SillyTavern.getContext().chat !== chat || getChatStore() !== store || summarizationStopRequested) return;
             if (choice === 'skip') {
-                const current = await planRawContext(chat, store, getSettings());
+                const current = await planRawContext(chat, store, getSettings(), () => summarizationStopRequested);
                 if (SillyTavern.getContext().chat !== chat || summarizationStopRequested) return;
                 store.skippedMessageIds = [...new Set([...(store.skippedMessageIds || []), ...current.availableMessageIds])];
                 updateSourceBoundary(store, chat);
@@ -858,7 +637,7 @@ async function summarizeOneBatchFromTurns() {
     setSummaryStatus('Preparing message context and counting source tokens.');
     syncContextOverrides(chat);
     await protectBlindZone(chat);
-    const plan = await planRawContext(chat, store, settings);
+    const plan = await planRawContext(chat, store, settings, () => summarizationStopRequested);
     if (!plan.hasBatch || summarizationStopRequested || isChatGenerating() || SillyTavern.getContext().chat !== chat || getChatStore() !== store) return false;
     const passage = plan.passage;
     const startIndex = passage.indices[0];
@@ -914,7 +693,7 @@ async function runCatchupLoop() {
     trace('>>> ENTERING runCatchup');
 
     const s = getSettings();
-    const initialPlan = await planRawContext(startingChat, startingStore, s);
+    const initialPlan = await planRawContext(startingChat, startingStore, s, () => summarizationStopRequested);
     const totalBatches = Math.max(1, initialPlan.batchCount);
     let completed = 0;
     let failed = 0;
@@ -949,7 +728,7 @@ async function runCatchupLoop() {
                 cancelled = true;
                 break;
             }
-            const plan = await planRawContext(chat, startingStore, getSettings());
+            const plan = await planRawContext(chat, startingStore, getSettings(), () => summarizationStopRequested);
             if (!plan.hasBatch) break;
             if (summarizationStopRequested || SillyTavern.getContext().chat !== startingChat) { cancelled = true; break; }
             const result = await summarizeOneBatchFromTurns();
@@ -1068,13 +847,18 @@ async function showCatchupDialog(overflowCount, estimatedCalls) {
 // ─── Core: Layer Promotion ("ception") ──────────────────────────────
 
 async function commitBalancedMemory(store, draft, before, chat) {
-    try {
-        await rebalanceMemory(draft, getSettings(), callSummarizer, mergedSources);
+    const commit = async () => {
         if (getChatStore() !== store || SillyTavern.getContext().chat !== chat || JSON.stringify(store) !== before) {
             throw new Error('Chat or memory changed during compression. Result discarded.');
         }
-        store.layers = draft.layers;
-        store.l0Archive = draft.l0Archive;
+        store.layers = structuredClone(draft.layers);
+        store.l0Archive = structuredClone(draft.l0Archive);
+        before = JSON.stringify(store);
+        await saveChatStore();
+    };
+    try {
+        await rebalanceMemory(draft, getSettings(), callSummarizer, mergedSources, commit);
+        await commit();
         return true;
     } catch (error) {
         toastr.warning(error.message, 'Summaryception', { timeOut: TUNING.toastError });
@@ -1085,9 +869,7 @@ async function commitBalancedMemory(store, draft, before, chat) {
 async function maybePromoteLayer() {
     const store = getChatStore();
     const before = JSON.stringify(store);
-    const ok = await commitBalancedMemory(store, structuredClone(store), before, SillyTavern.getContext().chat);
-    if (ok) await saveChatStore();
-    return ok;
+    return commitBalancedMemory(store, structuredClone(store), before, SillyTavern.getContext().chat);
 }
 
 // ─── Core: Assemble Full Summary Block ──────────────────────────────
@@ -1166,6 +948,7 @@ function onMessageReceived(messageIndex) {
 }
 
 function onChatChanged() {
+    if (isSummarizing || currentAbortController) abortSummarization();
     cancelCatchupDialog?.();
     catchupDismissed = false;
     _lastInjection = '';
@@ -1241,28 +1024,7 @@ function registerSlashCommands() {
             name: 'sc-clear',
             callback: async () => {
                 if (!canModifyMemory()) return 'Stop the current summary request before clearing memory.';
-                await unghostAllMessages();
-
-                const store = getChatStore();
-                store.layers.length = 0;
-                store.l0Archive = {};
-                delete store.skippedMessageIds;
-                delete store.legacySourceIds;
-                store.summarizedUpTo = -1;
-                store.ghostedIndices = [];
-
-                const { chatMetadata } = SillyTavern.getContext();
-                chatMetadata[MODULE_NAME] = store;
-
-                await saveChatStore();
-                try {
-                    const ctx2 = SillyTavern.getContext();
-                    if (ctx2.saveChat) await ctx2.saveChat();
-                } catch (e) {
-                    log('Could not save chat:', e);
-                }
-                updateInjection();
-                updateUI();
+                await clearMemory();
                 return 'Summaryception memory cleared and messages unghosted.';
             },
             helpString: 'Clear all Summaryception memory and unghost messages for this chat',
@@ -1292,7 +1054,8 @@ function updateUI({ refreshSnippets = true } = {}) {
         $('#sc_ghost_user_messages').prop('checked', s.ghostUserMessages);
         $('#sc_ghost_assistant_messages').prop('checked', s.ghostAssistantMessages);
         $('#sc_reapply_ghosting').prop('checked', s.reapplyGhostingOnSummary);
-        $('#sc_injection_position').val(s.injectionPosition);
+        $('#sc_injection_position').val(s.injectionPosition === 1 && s.injectionDepth === 0 ? 'chat_end' : s.injectionPosition);
+        $('#sc_injection_depth_controls').toggle(s.injectionPosition === 1 && s.injectionDepth !== 0);
         $('#sc_injection_depth').val(s.injectionDepth).prop('disabled', s.injectionPosition !== 1);
         $('#sc_injection_role').val(s.injectionRole).prop('disabled', s.injectionPosition !== 1);
         $('#sc_injection_scan').prop('checked', s.injectionScan);
@@ -1529,7 +1292,8 @@ function updateSnippetBrowser() {
             for (let j = 0; j < layer.length; j++) {
                 const sn = layer[j];
                 const sources = resolveSnippetSources(sn, SillyTavern.getContext().chat);
-                const rangeStr = sources.known ? `Messages: ${formatSourceIndices(sources.indices) || '(none)'}` : 'Source messages unavailable (legacy summary)';
+                const rangeStr = sources.known ? `Messages: ${formatSourceIndices(sources.indices) || '(none)'}`
+                    : sn.sourceStatus === 'unlinked' ? 'Imported memory; source messages are not linked in this chat' : 'Source messages unavailable (legacy summary)';
                 const sourceWarning = !sources.known ? '' : sources.missing ? ` · ${sources.missing} missing` : sn.sourceStatus === 'inferred' ? ' · recovered from legacy range; verify' : '';
                 const seedStr = sn.promoted ? ' 🌱' : '';
                 const canRedo = sources.known && !sources.missing && sources.indices.length;
@@ -1666,11 +1430,21 @@ function bindUIEvents() {
         getSettings().summaryCustomLanguage = $(this).val();
         saveSettings();
     });
-    $(document).on('change', '#sc_enabled', function () {
-        getSettings().enabled = $(this).prop('checked');
-        if (!getSettings().enabled && isSummarizing) abortSummarization();
-        saveSettings();
-        updateInjection();
+    $(document).on('change', '#sc_enabled', async function () {
+        const enabled = $(this).prop('checked');
+        try {
+            if (!enabled) {
+                if (isSummarizing) abortSummarization();
+                await unghostAllMessages();
+                await saveChatStore();
+            }
+            getSettings().enabled = enabled;
+            saveSettings();
+            updateInjection();
+        } catch (error) {
+            $(this).prop('checked', getSettings().enabled);
+            toastr.error(error.message, 'Summaryception');
+        }
     });
 
     $(document).on('change', '#sc_pause_summarization', function () {
@@ -1707,8 +1481,17 @@ function bindUIEvents() {
             if (key === 'injectionScan') updateInjection();
         });
     }
+    $(document).on('change', '#sc_injection_position', function () {
+        const selected = $(this).val();
+        const settings = getSettings();
+        settings.injectionPosition = selected === 'chat_end' ? 1 : Number(selected);
+        if (selected === 'chat_end') settings.injectionDepth = 0;
+        else if (selected === '1' && settings.injectionDepth === 0) settings.injectionDepth = 1;
+        saveSettings();
+        updateInjection();
+        updateUI();
+    });
     for (const [id, key, min, max] of [
-        ['#sc_injection_position', 'injectionPosition', -1, 2],
         ['#sc_injection_depth', 'injectionDepth', 0, 9999],
         ['#sc_injection_role', 'injectionRole', 0, 2],
     ]) {
@@ -1817,35 +1600,12 @@ function bindUIEvents() {
     $(document).on('click', '#sc_clear_memory', async function () {
         if (!canModifyMemory()) return;
         if (!confirm('Clear ALL Summaryception memory for this chat and unghost all messages?')) return;
-
         try {
-            await unghostAllMessages();
-        } catch (e) {
-            console.error(LOG_PREFIX, 'Error during unghost (continuing with clear):', e);
-            toastr.warning('Some messages could not be unghosted, but memory will still be cleared.', 'Summaryception');
+            await clearMemory();
+            toastr.success('Memory cleared & messages unghosted', 'Summaryception');
+        } catch (error) {
+            toastr.error('Clear failed: ' + error.message + '. Summary memory was kept.', 'Summaryception');
         }
-
-        const store = getChatStore();
-        store.layers.length = 0;
-        store.l0Archive = {};
-        delete store.skippedMessageIds;
-        delete store.legacySourceIds;
-        store.summarizedUpTo = -1;
-        store.ghostedIndices = [];
-
-        const { chatMetadata } = SillyTavern.getContext();
-        chatMetadata[MODULE_NAME] = store;
-
-        await saveChatStore();
-        try {
-            const ctx = SillyTavern.getContext();
-            if (ctx.saveChat) await ctx.saveChat();
-        } catch (e) {
-            log('Could not save chat:', e);
-        }
-        updateInjection();
-        updateUI();
-        toastr.success('Memory cleared & messages unghosted', 'Summaryception');
     });
 
     $(document).on('click', '#sc_force_summarize', async function () {
@@ -1874,7 +1634,7 @@ function bindUIEvents() {
 
             const { chat } = SillyTavern.getContext();
             await protectBlindZone(chat);
-            const plan = await planRawContext(chat, getChatStore(), s);
+            const plan = await planRawContext(chat, getChatStore(), s, () => summarizationStopRequested);
             if (summarizationStopRequested) return;
             if (!plan.hasBatch) {
                 setSummaryStatus('Nothing to summarize outside the retained context and blind zone.', 'idle');
@@ -1899,8 +1659,6 @@ function bindUIEvents() {
         }
         abortSummarization();
         toastr.warning('Stop requested. Waiting for the active step to finish.', 'Summaryception', { timeOut: TUNING.toastLong });
-        $(this).prop('disabled', true);
-        setTimeout(() => $(this).prop('disabled', false), TUNING.stopButtonCooldown);
         updateUI();
     });
 
@@ -1943,6 +1701,14 @@ function bindUIEvents() {
                     skippedMessageIds: data.skippedMessageIds || [], legacySourceIds: data.legacySourceIds,
                     summarizedUpTo: data.summarizedUpTo ?? -1,
                     ghostedIndices: chat.flatMap((message, index) => message.extra?.sc_ghosted ? [index] : []) };
+                const messageIds = new Set(chat.map(sourceId));
+                for (const snippet of draft.layers.flat()) {
+                    if (!Array.isArray(snippet.sourceMessageIds) || snippet.sourceMessageIds.some(id => !messageIds.has(id))) {
+                        snippet.importedSourceMessageIds ??= snippet.sourceMessageIds;
+                        delete snippet.sourceMessageIds;
+                        snippet.sourceStatus = 'unlinked';
+                    }
+                }
                 ensureSummarySources(draft, chat);
                 await prepareTokenMemory(draft);
                 if (!canModifyMemory() || SillyTavern.getContext().chat !== chat || getChatStore() !== store) return;
