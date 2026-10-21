@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.13**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.14**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
@@ -85,7 +85,7 @@ Deleting a summary releases messages with no remaining summary. Automatic hiding
 
 Empty outputs, model refusals and provider content-filter responses are rejected. Invalid assistant replies do not count toward the trigger. Failed initial generation leaves memory and visibility unchanged. Failed compression retains the already saved new summary and stops transfers; it does not delete that summary or request its source messages again.
 
-Memory position uses plain labels and order examples: before system/setup; after system/setup, before chat; after the conversation; or inside the conversation at a chosen distance. These map to ST's native Main Prompt / Story String and In-chat @ Depth positions. After the conversation means depth 0; other extensions or final preset instructions may still follow. ST has no native always-last position. The selected role controls who sends the memory, independently of its position.
+Memory position uses plain labels and order examples: before system/setup; immediately before the conversation; after the conversation; or inside the conversation at a chosen distance. **Immediately before the conversation** places memory directly before the first retained source message, after the setup and prefix instructions preceding that message. It follows the actual history boundary when ST trims older messages. The former After system/setup selection automatically uses this corrected placement; there is no manual migration. Memory is counted by native ST before context trimming, then positioned through native prompt events. Text Completion retains its instruct formatting. Preset blocks deliberately placed after or inside chat keep their configured positions. After the conversation means depth 0; other extensions or final preset instructions may still follow. ST has no native always-last position. The selected role controls who sends the memory, independently of its position.
 
 ## Compatibility and verification
 

@@ -4,9 +4,10 @@
     "requires": [],
     "optional": [],
     "js": "index.js",
+    "generate_interceptor": "summaryceptionCapturePromptSources",
     "css": "style.css",
     "author": "Lodactio",
-    "version": "5.5.4-local.13",
+    "version": "5.5.4-local.14",
     "homePage": "https://github.com/ilya626/Extension-Summaryception",
     "auto_update": false
 }

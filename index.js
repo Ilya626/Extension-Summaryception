@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.13 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.14 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -24,7 +24,7 @@ import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.13';
+const RUNTIME_VERSION = '5.5.4-local.14';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -904,13 +904,27 @@ function assembleSummaryBlock() {
 // ─── Injection via setExtensionPrompt ────────────────────────────────
 
 let _lastInjection = '';
+const STORY_MEMORY_START = '<summaryception_story_memory>';
+const STORY_MEMORY_END = '</summaryception_story_memory>';
+let promptSourceChat = null;
+
+// ST supplies its processed source messages before formatting and truncation.
+// Keep the reference; do not edit the chat or the other interceptors' results.
+globalThis.summaryceptionCapturePromptSources = chat => { promptSourceChat = chat; };
 
 function updateInjection() {
     try {
-        const { setExtensionPrompt } = SillyTavern.getContext();
+        const { setExtensionPrompt, mainApi } = SillyTavern.getContext();
         const settings = getSettings();
-        const text = settings.enabled ? assembleSummaryBlock() : '';
-        const args = [text, settings.injectionPosition, settings.injectionDepth, settings.injectionScan, settings.injectionRole];
+        let text = settings.enabled ? assembleSummaryBlock() : '';
+        const beforeChat = settings.injectionPosition === 0;
+        if (beforeChat && text) text = `${STORY_MEMORY_START}\n${text}\n${STORY_MEMORY_END}`;
+        // CC counts memory at depth 0 before trimming history; the ready event
+        // moves that already-budgeted block to the retained history boundary.
+        // TC preallocates in-chat injections, including those before all chat.
+        const position = beforeChat ? 1 : settings.injectionPosition;
+        const depth = beforeChat ? (mainApi === 'openai' ? 0 : 10000) : settings.injectionDepth;
+        const args = [text, position, depth, settings.injectionScan, settings.injectionRole];
         const signature = JSON.stringify(args);
         if (signature === _lastInjection) return;
         setExtensionPrompt(MODULE_NAME, ...args);
@@ -918,6 +932,64 @@ function updateInjection() {
     } catch (error) {
         console.error(LOG_PREFIX, 'Could not update summary injection:', error);
     }
+}
+
+async function placeMemoryBeforeChat({ chat }) {
+    if (!Array.isArray(chat)) return;
+    const sourceIndex = chat.findIndex(message => typeof message.content === 'string' && message.content.includes(STORY_MEMORY_START));
+    if (sourceIndex < 0) return; // Raw/profile summarization requests have no memory injection.
+    const { promptManager, setOpenAIMessages } = await import('/scripts/openai.js');
+    const nativeMessages = promptManager.messages.flatten().filter(message => message.content || message.tool_calls);
+    const context = SillyTavern.getContext();
+    const sources = setOpenAIMessages(promptSourceChat || context.chat.filter(message => !message.is_system));
+    const sourceText = new Set(sources.map(message => `${message.role}\0${context.substituteParams(message.content)}`));
+    const textContent = content => typeof content === 'string' ? content : (content || []).filter(part => part.type === 'text').map(part => part.text).join('\n');
+    let boundaryOffset = 0;
+    const boundary = nativeMessages.find(message => {
+        if (!/^(?:chatHistory-|toolCall-chatHistory-|continuePrefill)/.test(message.identifier)) return false;
+        const text = textContent(message.content);
+        if (sourceText.has(`${message.role}\0${text}`) || message.tool_calls) return true;
+        // ST can squash a narrator message together with a leading system note.
+        if (message.role !== 'system') return false;
+        const offsets = sources.filter(source => source.role === 'system' && source.content)
+            .map(source => text.indexOf(context.substituteParams(source.content))).filter(offset => offset >= 0);
+        if (!offsets.length) return false;
+        boundaryOffset = Math.min(...offsets);
+        return true;
+    })
+        || nativeMessages.find(message => message.identifier === 'newMainChat');
+    let insertionIndex = boundary ? chat.findIndex(message => message.role === boundary.role && message.content === boundary.content) : chat.length;
+    if (insertionIndex < 0) insertionIndex = chat.length;
+    else if (boundary.identifier === 'newMainChat') insertionIndex++;
+    const source = chat[sourceIndex];
+    const start = source.content.indexOf(STORY_MEMORY_START);
+    const end = source.content.indexOf(STORY_MEMORY_END, start);
+    if (end < 0) return;
+    const memory = source.content.slice(start + STORY_MEMORY_START.length, end).trim();
+    const remainder = (source.content.slice(0, start) + source.content.slice(end + STORY_MEMORY_END.length)).trim();
+    if (remainder) source.content = remainder;
+    else {
+        chat.splice(sourceIndex, 1);
+        if (sourceIndex < insertionIndex) insertionIndex--;
+    }
+    if (boundaryOffset > 0) {
+        const message = chat[insertionIndex];
+        const prefix = message.content.slice(0, boundaryOffset).trimEnd();
+        message.content = message.content.slice(boundaryOffset).trimStart();
+        chat.splice(insertionIndex++, 0, { role: 'system', content: prefix });
+    }
+    chat.splice(insertionIndex, 0, { role: ['system', 'user', 'assistant'][getSettings().injectionRole], content: memory });
+}
+
+function placeTextMemoryBeforeChat({ finalMesSend }) {
+    if (!Array.isArray(finalMesSend)) return;
+    const index = finalMesSend.findIndex(message => message.injected && message.message.includes(STORY_MEMORY_START));
+    if (index < 0) return;
+    // Move the formatted, budgeted injection intact; preserve instruct syntax.
+    const [memory] = finalMesSend.splice(index, 1);
+    memory.message = memory.message.replace(STORY_MEMORY_START, '').replace(STORY_MEMORY_END, '');
+    const boundary = finalMesSend.findIndex(message => !message.injected);
+    finalMesSend.splice(boundary < 0 ? finalMesSend.length : boundary, 0, memory);
 }
 
 // ─── Event Handlers ──────────────────────────────────────────────────
@@ -948,6 +1020,7 @@ function onMessageReceived(messageIndex) {
 }
 
 function onChatChanged() {
+    promptSourceChat = null;
     if (isSummarizing || currentAbortController) abortSummarization();
     cancelCatchupDialog?.();
     catchupDismissed = false;
@@ -977,6 +1050,7 @@ async function hydrateTokenCounts() {
 }
 
 function onGenerationStarted() {
+    promptSourceChat = null;
     syncContextOverrides(SillyTavern.getContext().chat);
     updateInjection();
 }
@@ -1057,7 +1131,7 @@ function updateUI({ refreshSnippets = true } = {}) {
         $('#sc_injection_position').val(s.injectionPosition === 1 && s.injectionDepth === 0 ? 'chat_end' : s.injectionPosition);
         $('#sc_injection_depth_controls').toggle(s.injectionPosition === 1 && s.injectionDepth !== 0);
         $('#sc_injection_depth').val(s.injectionDepth).prop('disabled', s.injectionPosition !== 1);
-        $('#sc_injection_role').val(s.injectionRole).prop('disabled', s.injectionPosition !== 1);
+        $('#sc_injection_role').val(s.injectionRole).prop('disabled', s.injectionPosition !== 0 && s.injectionPosition !== 1);
         $('#sc_injection_scan').prop('checked', s.injectionScan);
         $('#sc_summarizer_world_info').prop('checked', s.summarizerWorldInfo);
         $('#sc_summary_language').val(s.summaryLanguage);
@@ -2218,6 +2292,8 @@ function showConnectionStatus(type, message) {
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_DELETED, onChatChanged);
     eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
+    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, placeMemoryBeforeChat);
+    eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, placeTextMemoryBeforeChat);
     if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, onGenerationEnded);
 
     registerSlashCommands();

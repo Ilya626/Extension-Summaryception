@@ -1,6 +1,14 @@
-# Local version 5.5.4-local.13
+# Local version 5.5.4-local.14
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.14 immediately before retained conversation
+
+Corrected the former After system/setup position: it now means Immediately before the conversation, rather than after Main Prompt with character/lore blocks still between memory and history. Existing selections use the corrected behavior automatically. The selected message role is available for this position too.
+
+Native ST counts the memory before trimming history. Chat Completion then moves that budgeted block directly before the first retained source message, after any prefix instructions. ST's native generation interceptor supplies the processed source messages for matching; neither it nor the placement hook changes source chat messages. Raw/profile summarization requests are untouched. Text Completion moves the budgeted injection through ST's pre-combine event, preserving its complete instruct formatting. Other preset blocks retain their configured order.
+
+Verified with native ST 1.19.0 prompt assembly: character/lore setup; prefix notes in all three roles; system-message squashing on/off; a 500-token context retaining only messages 17–19; the native interceptor dispatcher; Text Completion instruct formatting and Continue. Memory appeared once, directly before the first retained source message. All 57 existing tests pass; no new test cases were added.
 
 ## local.13 request simplification and addon audit
 

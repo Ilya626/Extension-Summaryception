@@ -29,13 +29,13 @@
             <select id="sc_injection_position" class="text_pole" aria-describedby="sc_injection_position_help">
                 <option value="-1">Off — do not send memory</option>
                 <option value="2">Before the system / setup prompt</option>
-                <option value="0">After the system / setup prompt, before chat</option>
+                <option value="0">Immediately before the conversation</option>
                 <option value="chat_end">After the conversation (latest message)</option>
                 <option value="1">Inside the conversation — set distance below</option>
             </select>
             <small id="sc_injection_position_help" class="sc-hint">
                 <b>Before:</b> Memory → System / setup → … → Chat<br />
-                <b>After:</b> System / setup → Memory → … → Chat<br />
+                <b>Before the conversation:</b> System / setup → … → Memory → Chat<br />
                 <b>After the conversation:</b> System / setup → … → Chat → Memory<br />
                 Chat means your messages and the AI's replies. The dots stand for other preset blocks, such as character details or lore.
             </small>
@@ -55,7 +55,7 @@
             </div>
             <details>
                 <summary>ST details and ordering limits</summary>
-                <small class="sc-hint">System / setup means ST's Main Prompt in Chat Completion, or Story String in Text Completion. Inside / After the conversation use In-chat @ Depth; After is depth 0. The diagrams show the usual preset order; your ST preset controls the other blocks.</small>
+                <small class="sc-hint">Immediately before the conversation places memory directly before the first retained chat message, after the setup and prefix instructions preceding it. It follows that boundary when ST trims older messages. The former After system/setup option now uses this placement automatically. Inside / After the conversation use ST's In-chat @ Depth; After is depth 0. Your preset still controls its other blocks.</small>
                 <small class="sc-hint">Other extensions or final preset instructions can still follow the memory: ST has no native “always last in the full request” position. During Text Completion Continue, ST puts depth 0 before the AI message being continued.</small>
             </details>
             <label class="checkbox_label" for="sc_injection_scan">
