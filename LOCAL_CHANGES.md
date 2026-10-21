@@ -1,6 +1,12 @@
-# Local version 5.5.4-local.9
+# Local version 5.5.4-local.10
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.10 mobile Regenerate and Refine
+
+Fixed taps being lost when a summary editor had focus. Blurring previously rebuilt the entire snippet browser before the action's click, removing or moving the tapped button. Action buttons now keep focus stable through pointer activation; edits finish before Regenerate, Refine or Delete proceeds, and closing an editor preserves its text click handler and the action nodes. Refine receives the saved edited summary. Unexpected rewrite/edit exceptions produce a visible error.
+
+Verified in mobile Edge at 390x844 and with mouse clicks at 1440x1000 against native ST 1.19.0. Requests retained the configured addon OpenAI endpoint, native ST Custom API URL/model/custom fields/headers, and selected Connection Profile. Model responses were intercepted; no external model calls were made. All 57 existing tests still pass.
 
 ## local.9 defaults and native update instructions
 

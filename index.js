@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.9 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.10 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -1260,7 +1260,7 @@ function registerSlashCommands() {
 
 // ─── Settings UI ─────────────────────────────────────────────────────
 
-function updateUI() {
+function updateUI({ refreshSnippets = true } = {}) {
     try {
         const s = getSettings();
         const store = getChatStore();
@@ -1336,7 +1336,7 @@ function updateUI() {
         const preview = assembleSummaryBlock();
         $('#sc_preview').val(preview || '(empty — no summaries yet)');
 
-        updateSnippetBrowser();
+        if (refreshSnippets) updateSnippetBrowser();
         updateCustomPromptSlots();
     } catch (e) {
         log('updateUI error:', e);
@@ -1484,6 +1484,8 @@ function canModifyMemory() {
 
 function updateSnippetBrowser() {
     const store = getChatStore();
+    let pendingEdit = Promise.resolve(true);
+    let finishActiveEdit = null;
     let html = '';
 
     if (!store.layers || store.layers.every(l => !l || l.length === 0)) {
@@ -1541,33 +1543,47 @@ function updateSnippetBrowser() {
         const sn = layer[snippetIdx];
         const textEl = $(this);
 
-        const textarea = $('<textarea class="sc-snippet-edit"></textarea>')
-            .val(sn.text)
-            .on('keydown', async function (e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    const newText = $(this).val().trim();
-                    if (newText && newText !== sn.text && await applyManualSummaryEdit(store, sn, layerIdx, newText)) {
-                        await saveChatStore();
-                        updateInjection();
-                        toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
-                    }
-                    updateSnippetBrowser();
-                } else if (e.key === 'Escape') {
-                    updateSnippetBrowser();
-                }
-            })
-            .on('blur', async function () {
-                const newText = $(this).val().trim();
-                if (newText && newText !== sn.text && await applyManualSummaryEdit(store, sn, layerIdx, newText)) {
+        let finished = false;
+        const finishEdit = (save = true) => {
+            if (finished) return pendingEdit;
+            finished = true;
+            const newText = textarea.val().trim();
+            pendingEdit = pendingEdit.then(async () => {
+                if (save && newText && newText !== sn.text) {
+                    if (!await applyManualSummaryEdit(store, sn, layerIdx, newText)) return false;
                     await saveChatStore();
                     updateInjection();
                     toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
                 }
-                updateSnippetBrowser();
+                return true;
+            }).catch(error => {
+                console.error(LOG_PREFIX, 'Summary edit failed:', error);
+                toastr.error(`Could not save summary edit: ${error.message}`, 'Summaryception');
+                return false;
+            }).finally(() => {
+                // Blur runs before the tapped button's click. Keep its DOM node
+                // in place so touch and mouse clicks both reach the action.
+                textarea.replaceWith(textEl.text(sn.text));
+                if (finishActiveEdit === finishEdit) finishActiveEdit = null;
+                if (getChatStore() === store) updateUI({ refreshSnippets: false });
             });
+            return pendingEdit;
+        };
+        finishActiveEdit = finishEdit;
+        const textarea = $('<textarea class="sc-snippet-edit"></textarea>')
+            .val(sn.text)
+            .on('keydown', function (e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void finishEdit();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    void finishEdit(false);
+                }
+            })
+            .on('blur', () => { void finishEdit(); });
 
-        textEl.replaceWith(textarea);
+        textEl.after(textarea).detach();
 
         // Auto-size to fit content
         textarea[0].style.height = 'auto';
@@ -1576,12 +1592,20 @@ function updateSnippetBrowser() {
         textarea.focus().select();
     });
 
+    // Keep focus until click: blurring on pointerdown can resize the editor
+    // and move the button away before a touch is released.
+    $('.sc-snippet-actions button').off('pointerdown').on('pointerdown', event => event.preventDefault());
+
     $('.sc-snippet-redo, .sc-snippet-refine').off('click').on('click', async function () {
         const parent = $(this).closest('.sc-snippet');
         const refine = $(this).hasClass('sc-snippet-refine');
         $(this).prop('disabled', true);
         try {
+            if (!await (finishActiveEdit ? finishActiveEdit() : pendingEdit)) return;
             await rewriteSnippet(Number(parent.data('layer')), Number(parent.data('idx')), refine);
+        } catch (error) {
+            console.error(LOG_PREFIX, 'Summary rewrite failed:', error);
+            toastr.error(`Could not ${refine ? 'refine' : 'regenerate'} summary: ${error.message}`, 'Summaryception');
         } finally {
             $(this).prop('disabled', false);
         }
@@ -1589,6 +1613,7 @@ function updateSnippetBrowser() {
 
     $('.sc-snippet-delete').off('click').on('click', async function () {
         const parent = $(this).closest('.sc-snippet');
+        if (!await (finishActiveEdit ? finishActiveEdit() : pendingEdit)) return;
         await deleteSnippet(Number(parent.data('layer')), Number(parent.data('idx')));
     });
 }
@@ -2406,6 +2431,6 @@ function showConnectionStatus(type, message) {
         syncContextOverrides(SillyTavern.getContext().chat);
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.5.4-local.9 loaded. Raw context token budgets and protected blind zone available');
+        console.log(LOG_PREFIX, 'v5.5.4-local.10 loaded. Raw context token budgets and protected blind zone available');
     });
 })();
