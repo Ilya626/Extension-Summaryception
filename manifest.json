@@ -7,7 +7,7 @@
     "generate_interceptor": "summaryceptionCapturePromptSources",
     "css": "style.css",
     "author": "Lodactio",
-    "version": "5.5.4-local.15",
+    "version": "5.5.4-local.16",
     "homePage": "https://github.com/ilya626/Extension-Summaryception",
     "auto_update": false
 }

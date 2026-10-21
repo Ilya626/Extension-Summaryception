@@ -1,6 +1,12 @@
-# Local version 5.5.4-local.15
+# Local version 5.5.4-local.16
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.16 tolerate stale profile API identifiers
+
+An unsupported/obsolete API identifier in any saved Connection Profile could make ST's isProfileSupported throw while the addon populated its dropdown. This interrupted initialization before summary action handlers were installed, even when using OpenAI Compatible. Unsupported entries are now skipped independently; saved profiles are not modified, and unrelated connection modes initialize normally.
+
+Completed native ST/local-provider checks: mobile Regenerate with regular responses, Refine with streaming, Test Connection in both modes, checkbox persistence after ST's settings save, correct active Custom model, and cancellation of streaming OpenAI Compatible/Profile/Default requests. Kobold and NovelAI streaming payloads were checked with intercepted backend responses. The invalid-profile reproduction retained its bad profile while Regenerate succeeded after the fix. All 57 existing tests pass; no new test cases were added.
 
 ## local.15 shared streaming control
 

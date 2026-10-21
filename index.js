@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.15 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.16 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -24,7 +24,7 @@ import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.15';
+const RUNTIME_VERSION = '5.5.4-local.16';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 

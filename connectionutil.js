@@ -747,7 +747,10 @@ export function populateProfileDropdown(selectElement, currentValue, onChange = 
         placeholder.textContent = '-- Select a Profile --';
         selectElement.appendChild(placeholder);
         for (const profile of [...profiles].sort((a, b) => a.name.localeCompare(b.name))) {
-            if (service.isProfileSupported && !service.isProfileSupported(profile)) continue;
+            // Native ST can throw for a stale/unknown API identifier. One bad
+            // profile must not abort initialization of unrelated connections.
+            try { if (service.isProfileSupported && !service.isProfileSupported(profile)) continue; }
+            catch { continue; }
             const option = document.createElement('option');
             option.value = profile.id;
             option.textContent = profile.name;
