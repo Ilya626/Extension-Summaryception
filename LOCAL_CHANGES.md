@@ -1,6 +1,16 @@
-# Local version 5.5.4-local.16
+# Local version 5.5.4-local.17
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.17 edited-source warnings and PHI audit
+
+L0 summaries now retain compact fingerprints of their actual source text, speaker name and role. An edit or changed swipe produces a collapsible warning listing affected L0 summaries and message indices, with a Regenerate action using the same saved sources. Successful regeneration/Refine refreshes the fingerprints. Failed/refused requests leave the old summary and warning intact. Returning to the original text clears the warning. There is no automatic regeneration or new blocking gate. Deep layers are not monitored. Legacy L0 summaries establish a baseline on first observation; earlier changes cannot be recovered.
+
+ST replaces message.extra when selecting a swipe. Source IDs are now also kept on the message itself, migrating existing IDs unchanged, so swipe selection cannot lose the original source membership.
+
+Audited native ST 1.19.0 PHI assembly and captured real local-provider payloads in all four connection modes with streaming both off and on. Character-card and preset PHI sentinels did not appear in summary requests. A normal-chat control confirmed that ST's character-instruction preference substitutes the card PHI for the preset PHI. No connection code change was necessary.
+
+All 57 existing tests pass; no new automated tests were added. Native mobile Edge checks covered edit warnings, actual ST swipe metadata replacement with stable IDs, refusal retention, successful regeneration, saved fingerprints across reload, and reverting edited text. Separate local UI comparison pictures propose modest card grouping; those review artifacts are not shipped with the addon.
 
 ## local.16 tolerate stale profile API identifiers
 

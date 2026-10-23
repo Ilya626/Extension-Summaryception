@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.16 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.17 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -21,10 +21,10 @@ import { syncContextOverrides, recordManualContext, setContextForMessages, apply
 import { collectSummaryWorldInfo, attachSummaryWorldInfo, installWorldInfoTracking } from './world-info-context.js';
 import { planRawContext, blindZoneStart } from './raw-context.js';
 import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision, pruneArchive, prepareTokenMemory, rebalanceMemory } from './token-memory.js';
-import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices } from './summary-sources.js';
+import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices, captureSourceFingerprints, changedL0Sources } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.16';
+const RUNTIME_VERSION = '5.5.4-local.17';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -996,6 +996,38 @@ function placeTextMemoryBeforeChat({ finalMesSend }) {
 // ─── Event Handlers ──────────────────────────────────────────────────
 
 const rejectedReplyWarnings = new WeakMap();
+const sourceChangeNotices = new WeakMap();
+let sourceChangeTimer;
+
+function updateSourceWarning(notify = false) {
+    const store = getChatStore();
+    const { chat } = SillyTavern.getContext();
+    const changes = changedL0Sources(store, chat);
+    const warning = $('#sc_l0_source_warning');
+    warning.prop('hidden', !changes.length);
+    warning.find('summary').text(`Chat edits affect ${changes.length} L0 ${changes.length === 1 ? 'summary' : 'summaries'}`);
+    warning.find('.sc-source-change-content').html(changes.map(({ snippetIndex, indices }) =>
+        `<div class="sc-source-change-item"><span>L0 #${snippetIndex + 1}: messages ${formatSourceIndices(indices)} changed. This memory may describe their previous version.</span><button class="sc-source-regenerate menu_button" data-idx="${snippetIndex}">Regenerate</button></div>`
+    ).join(''));
+    warning.find('.sc-source-regenerate').on('click', function () {
+        // Reuse the browser action, including saving an active inline edit.
+        $(`#sc_snippet_browser .sc-snippet[data-layer="0"][data-idx="${Number($(this).data('idx'))}"] .sc-snippet-redo`).trigger('click');
+    });
+    const signature = changes.map(({ snippet, indices }) => snippet.id + ':'
+        + JSON.stringify(captureSourceFingerprints(chat, indices.map(index => sourceId(chat[index]))))).join('|');
+    if (notify && signature && sourceChangeNotices.get(store) !== signature) {
+        toastr.warning('Summarized messages were edited. Open Summaryception → Snippet Browser to review and regenerate the affected L0 summaries.', 'Summaryception', { timeOut: TUNING.toastError });
+    }
+    if (notify || !signature) sourceChangeNotices.set(store, signature);
+}
+
+function onSourceMessagesChanged() {
+    clearTimeout(sourceChangeTimer);
+    const { chat } = SillyTavern.getContext();
+    sourceChangeTimer = setTimeout(() => {
+        if (SillyTavern.getContext().chat === chat && !isChatGenerating()) updateSourceWarning(true);
+    }, TUNING.messageReceivedDelay);
+}
 
 function onMessageReceived(messageIndex) {
     if (!getSettings().enabled) return;
@@ -1035,6 +1067,7 @@ function onChatChanged() {
         await hydrateTokenCounts();
         updateInjection();
         updateUI();
+        updateSourceWarning(true);
     }, TUNING.chatChangedDelay);
 }
 
@@ -1057,6 +1090,7 @@ function onGenerationStarted() {
 }
 
 function onGenerationEnded() {
+    onSourceMessagesChanged();
     const { chat } = SillyTavern.getContext();
     const index = chat.findLastIndex(message => !message.is_user && !message.is_system);
     if (index >= 0) onMessageReceived(index);
@@ -1197,6 +1231,7 @@ function updateUI({ refreshSnippets = true } = {}) {
         const preview = assembleSummaryBlock();
         $('#sc_preview').val(preview || '(empty — no summaries yet)');
 
+        updateSourceWarning();
         if (refreshSnippets) updateSnippetBrowser();
         updateCustomPromptSlots();
     } catch (e) {
@@ -1257,6 +1292,7 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
     }
     const previousText = snippet.text;
     const sourceIds = [...snippet.sourceMessageIds];
+    const sourceFingerprints = layerIndex === 0 ? captureSourceFingerprints(chat, sourceIds) : null;
     // Later memories may already depend on this snippet. Supplying them as
     // prior_context can make regeneration erase facts as "already recorded".
     const context = [];
@@ -1283,7 +1319,11 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
         }
         Object.assign(snippet, result, { sourceStatus: 'exact', timestamp: Date.now(), [refine ? 'refined' : 'regenerated']: true });
         setSummaryStatus('Saving the revised summary.');
-        if (layerIndex === 0) archiveL0(store, snippet);
+        if (layerIndex === 0) {
+            snippet.sourceFingerprints = sourceFingerprints;
+            snippet.sourceFingerprintOrigin = 'generated';
+            archiveL0(store, snippet);
+        }
         else preserveSourceRevision(snippet);
         await saveChatStore();
         updateInjection();
@@ -2299,6 +2339,9 @@ function showConnectionStatus(type, message) {
     initConnectionUI();
 
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    for (const type of new Set([event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED, event_types.MESSAGE_SWIPED, event_types.MESSAGE_RECEIVED].filter(Boolean))) {
+        eventSource.on(type, onSourceMessagesChanged);
+    }
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_DELETED, onChatChanged);
     eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);

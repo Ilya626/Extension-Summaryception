@@ -498,3 +498,13 @@
 .sc-layer-budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(105px, 1fr)); gap: 8px; }
 .sc-layer-budget-grid label { min-width: 0; }
 .sc-layer-budget-grid input { width: 100%; }
+/* Informational only: source edits never block chat or trigger paid requests. */
+.sc-source-change-warning {
+    border: 1px solid #c99a45;
+    border-radius: 6px;
+    padding: 8px;
+    margin: 8px 0;
+}
+.sc-source-change-warning > summary { cursor: pointer; color: #dfb56b; }
+.sc-source-change-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 8px; }
+.sc-source-change-item > span { flex: 1 1 180px; }

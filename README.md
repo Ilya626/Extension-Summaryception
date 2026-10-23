@@ -1,10 +1,22 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.16**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.17**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 This fork adds token-based context and memory budgets, protected recent exchanges, exact source tracking, Refine, native World Info and Connection Profiles, manual visibility preservation, refusal validation, and English UI with a summary-language selector.
 
 Summaryception records detailed RP memories, links them to their source messages, and injects the retained summaries into SillyTavern. Recent assistant turns remain available verbatim. Summarization is lossy; the prompts ask for concrete actions, dialogue, objects, spatial details, knowledge boundaries and unresolved consequences.
+
+## Edited source messages
+
+L0 summaries save compact fingerprints of the source text, speaker name and role submitted for summarization. Editing a linked message or selecting a different swipe shows an expandable warning above the Snippet Browser, listing the changed chat indices. **Regenerate** rebuilds that summary from its saved source membership using the current messages. Successful regeneration or Refine updates the fingerprints; a failed or refused request preserves both the summary and the warning. Reverting the source text clears the warning too. No request runs automatically, and the warning does not block chat or change message visibility.
+
+Only L0 is monitored. Existing summaries without fingerprints start tracking from their first observation after this update; changes made before that point cannot be reconstructed. Message IDs survive ST replacing swipe-specific metadata, so selecting a variant retains its summary links. Fingerprints persist in chat metadata and memory exports.
+
+## Post-History Instructions
+
+Summary requests use the addon's configured system and user prompts, selected sources, prior memory and optional triggered World Info. Native ST does not automatically append preset or character-card Post-History Instructions to these raw/profile requests. This was checked in ST 1.19.0 with actual local-provider payloads for Default, Profile, OpenAI Compatible and Ollama, streaming on and off. Other installed extensions can still modify native raw-generation hooks.
+
+Ordinary ST chat uses a different prompt assembly path: **Prefer character instructions** allows the card's Post-History Instructions to override the preset PHI. Summaryception does not change that preference.
 
 ## Raw context and blind zone
 

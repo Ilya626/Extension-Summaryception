@@ -4,7 +4,39 @@ const newId = () => globalThis.crypto?.randomUUID?.() || `sc-${Date.now()}-${Mat
 
 export function sourceId(message) {
     message.extra ??= {};
-    return message.extra.sc_message_id ??= newId();
+    // ST replaces extra with swipe-specific metadata when changing variants.
+    message.sc_message_id ??= message.extra.sc_message_id ?? newId();
+    return message.extra.sc_message_id = message.sc_message_id;
+}
+
+function sourceFingerprint(message) {
+    const text = JSON.stringify([Boolean(message.is_user), message.name || (message.is_user ? 'User' : 'Assistant'), message.mes?.trim() || '']);
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+        h1 = Math.imul(h1 ^ text.charCodeAt(i), 2654435761);
+        h2 = Math.imul(h2 ^ text.charCodeAt(i), 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `${text.length}:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16)}`;
+}
+
+export function captureSourceFingerprints(chat, ids) {
+    const selected = new Set(ids);
+    return Object.fromEntries(chat.filter(message => selected.has(sourceId(message)))
+        .map(message => [sourceId(message), sourceFingerprint(message)]));
+}
+
+export function changedL0Sources(store, chat) {
+    const byId = new Map(chat.map((message, index) => [sourceId(message), { message, index }]));
+    return (store.layers[0] || []).flatMap((snippet, snippetIndex) => {
+        const changed = (snippet.sourceMessageIds || []).flatMap(id => {
+            const found = byId.get(id);
+            return found && snippet.sourceFingerprints?.[id] !== undefined
+                && snippet.sourceFingerprints[id] !== sourceFingerprint(found.message) ? [found.index] : [];
+        });
+        return changed.length ? [{ snippet, snippetIndex, indices: changed }] : [];
+    });
 }
 
 export function canSummarizeMessage(message) {
@@ -28,6 +60,14 @@ export function ensureSummarySources(store, chat) {
             snippet.sourceMessageIds = chat.slice(start, end + 1).filter(canSummarizeMessage).map(sourceId);
             // Old versions stored only bounds, not the actual submitted set.
             snippet.sourceStatus = 'inferred';
+        }
+    }
+    // Older summaries have no historical text to hash. Track future edits from
+    // first observation; never silently replace an existing baseline.
+    for (const snippet of store.layers[0] || []) {
+        if (!snippet.sourceFingerprints && snippet.sourceStatus !== 'unlinked' && Array.isArray(snippet.sourceMessageIds)) {
+            snippet.sourceFingerprints = captureSourceFingerprints(chat, snippet.sourceMessageIds);
+            snippet.sourceFingerprintOrigin = 'first-observed';
         }
     }
     const unknown = snippets(store).some(snippet => snippet.sourceStatus !== 'unlinked' && !Array.isArray(snippet.sourceMessageIds));
@@ -58,6 +98,7 @@ export function collectPassage(chat, indices) {
     return {
         indices: selected,
         sourceMessageIds: selected.map(index => sourceId(chat[index])),
+        sourceFingerprints: captureSourceFingerprints(chat, selected.map(index => sourceId(chat[index]))),
         text: selected.map(index => {
             const message = chat[index];
             return `${message.name || (message.is_user ? 'User' : 'Assistant')}: ${message.mes.trim()}`;
@@ -91,7 +132,8 @@ export function mergedSources(children) {
 }
 
 export function newSnippetSources(passage) {
-    return { id: newId(), sourceMessageIds: passage.sourceMessageIds, sourceStatus: 'exact' };
+    return { id: newId(), sourceMessageIds: passage.sourceMessageIds, sourceStatus: 'exact',
+        sourceFingerprints: passage.sourceFingerprints, sourceFingerprintOrigin: 'generated' };
 }
 
 export function formatSourceIndices(indices) {
