@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.17 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.18 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -18,13 +18,13 @@ import {
 } from './connectionutil.js';
 import { getModelOutputIssue, requireModelOutput, stripReasoningBlocks, InvalidModelOutputError } from './output-validation.js';
 import { syncContextOverrides, recordManualContext, setContextForMessages, applySummaryContextPolicy, restoreAutomaticGhosts } from './context-control.js';
-import { collectSummaryWorldInfo, attachSummaryWorldInfo, installWorldInfoTracking } from './world-info-context.js';
+import { collectSummaryWorldInfo, attachSummaryWorldInfo, installWorldInfoTracking, summaryWorldInfoBudget } from './world-info-context.js';
 import { planRawContext, blindZoneStart } from './raw-context.js';
 import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision, pruneArchive, prepareTokenMemory, rebalanceMemory } from './token-memory.js';
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices, captureSourceFingerprints, changedL0Sources } from './summary-sources.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.17';
+const RUNTIME_VERSION = '5.5.4-local.18';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -125,6 +125,7 @@ const defaultSettings = Object.freeze({
     injectionDepth: 12,
     injectionScan: false,
     summarizerWorldInfo: true,
+    summarizerWorldInfoPercent: 20,
     summaryLanguage: 'en',
     summaryCustomLanguage: '',
     injectionRole: 1,
@@ -497,7 +498,12 @@ function abortSummarization() {
 
 // ─── Core: LLM Summarization ──────────────────────────────
 
-async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
+const sourceMessageTexts = (chat, indices) => indices.map(index => {
+    const message = chat[index];
+    return `${message.name || (message.is_user ? 'User' : 'Assistant')}: ${message.mes?.trim() || ''}`;
+});
+
+async function callSummarizer(storyTxt, contextStr, existingSummary = null, sourceMessages = null) {
     trace('>>> ENTERING callSummarizer');
     trace('  storyTxt length:', storyTxt?.length ?? 'UNDEFINED');
     trace('  contextStr length:', contextStr?.length ?? 'UNDEFINED');
@@ -541,7 +547,13 @@ async function callSummarizer(storyTxt, contextStr, existingSummary = null) {
         if (s.summarizerWorldInfo) {
             phase = 'World Info scan';
             setSummaryStatus('Scanning World Info.');
-            const worldInfo = await collectSummaryWorldInfo(storyTxt, [contextStr, existingSummary].filter(Boolean).join('\n'));
+            const worldInfo = await collectSummaryWorldInfo(storyTxt, [contextStr, existingSummary].filter(Boolean).join('\n'), {
+                maxTokens: summaryWorldInfoBudget(s), sourceMessages, signal,
+                onProgress: ({ tokens, limit }) => setSummaryStatus(`Scanning World Info: ${tokens} / ${limit} tokens. Newest sources first.`),
+                onComplete: ({ tokens, limit, partial }) => {
+                    if (partial) toastr.warning(`World Info was partially included (${tokens} / ${limit} tokens). Entries that did not fit were left out; source messages are unchanged.`, 'Summaryception');
+                },
+            });
             prompt = attachSummaryWorldInfo(prompt, worldInfo);
         }
         signal.throwIfAborted();
@@ -649,7 +661,7 @@ async function summarizeOneBatchFromTurns() {
     }
     try {
         const memoryBefore = JSON.stringify(store);
-        const summary = await callSummarizer(passage.text, buildFullContext(0));
+        const summary = await callSummarizer(passage.text, buildFullContext(0), null, sourceMessageTexts(chat, passage.indices));
         if (!summary) return false;
         if (SillyTavern.getContext().chat !== chat || getChatStore() !== store
             || JSON.stringify(store) !== memoryBefore || resolveSnippetSources(passage, chat).text !== passage.text
@@ -1169,6 +1181,9 @@ function updateUI({ refreshSnippets = true } = {}) {
         $('#sc_injection_role').val(s.injectionRole).prop('disabled', s.injectionPosition !== 0 && s.injectionPosition !== 1);
         $('#sc_injection_scan').prop('checked', s.injectionScan);
         $('#sc_summarizer_world_info').prop('checked', s.summarizerWorldInfo);
+        $('#sc_summarizer_world_info_percent').val(s.summarizerWorldInfoPercent).prop('disabled', !s.summarizerWorldInfo);
+        $('#sc_world_info_budget_controls').toggleClass('sc-disabled', !s.summarizerWorldInfo);
+        $('#sc_world_info_budget_tokens').text(`${summaryWorldInfoBudget(s).toLocaleString()} tokens maximum at ${s.batchContextTokens.toLocaleString()} source tokens per summary.`);
         $('#sc_summary_language').val(s.summaryLanguage);
         $('#sc_summary_custom_language').val(s.summaryCustomLanguage).toggle(s.summaryLanguage === 'custom');
         $('#sc_retained_context_tokens').val(s.retainedContextTokens);
@@ -1308,7 +1323,7 @@ async function rewriteSnippet(layerIndex, snippetIndex, refine = false) {
     isSummarizing = true;
     summarizationStopRequested = false;
     try {
-        const result = await callSummarizer(sources.text, context.join(' '), refine ? previousText : null);
+        const result = await callSummarizer(sources.text, context.join(' '), refine ? previousText : null, sourceMessageTexts(chat, sources.indices));
         if (!result) return false;
         if (SillyTavern.getContext().chat !== chat || getChatStore() !== store
             || !store.layers.some(layer => layer?.includes(snippet)) || snippet.text !== previousText
@@ -1595,8 +1610,14 @@ function bindUIEvents() {
             getSettings()[key] = $(this).prop('checked');
             saveSettings();
             if (key === 'injectionScan') updateInjection();
+            if (key === 'summarizerWorldInfo') updateUI({ refreshSnippets: false });
         });
     }
+    $(document).on('change', '#sc_summarizer_world_info_percent', function () {
+        getSettings().summarizerWorldInfoPercent = Math.min(100, Math.max(1, Number($(this).val()) || 20));
+        saveSettings();
+        updateUI({ refreshSnippets: false });
+    });
     $(document).on('change', '#sc_injection_position', function () {
         const selected = $(this).val();
         const settings = getSettings();
@@ -2058,7 +2079,7 @@ function bindUIEvents() {
         s.overrideLayerBudgets = false;
         s.layerTokenBudgets = structuredClone(defaultSettings.layerTokenBudgets);
 
-        for (const key of ['injectionPosition', 'injectionDepth', 'injectionRole', 'injectionScan', 'summarizerWorldInfo', 'ghostUserMessages', 'ghostAssistantMessages', 'reapplyGhostingOnSummary']) {
+        for (const key of ['injectionPosition', 'injectionDepth', 'injectionRole', 'injectionScan', 'summarizerWorldInfo', 'summarizerWorldInfoPercent', 'ghostUserMessages', 'ghostAssistantMessages', 'reapplyGhostingOnSummary']) {
             s[key] = defaultSettings[key];
         }
 

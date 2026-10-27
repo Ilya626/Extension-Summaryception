@@ -92,7 +92,14 @@
                 <input id="sc_summarizer_world_info" type="checkbox" />
                 <span>Include triggered World Info in summarizer requests</span>
             </label>
-            <small class="sc-hint">Scans all prior memory + the selected passage using ST's connected lorebooks and WI rules/budget. Includes all WI positions for new summaries, layer compression and regeneration. Lore is reference, not recorded events. Separate from ordinary chat World Info Scanning above.</small>
+            <div id="sc_world_info_budget_controls">
+                <div class="sc-row">
+                    <label for="sc_summarizer_world_info_percent">Maximum WI (% of Source Tokens per Summary)</label>
+                    <input id="sc_summarizer_world_info_percent" class="text_pole" type="number" min="1" max="100" step="1" />
+                </div>
+                <small id="sc_world_info_budget_tokens" class="sc-hint"></small>
+            </div>
+            <small class="sc-hint">Newest selected sources first, then prior memory. Uses ST's books and rules; adds whole entries once, with a warning if some do not fit. The limit includes WI labels and instructions and applies to every summary operation. Off skips scanning and keeps your limit.</small>
 
             <div class="sc-row">
                 <label for="sc_summary_language">Summary Language</label>

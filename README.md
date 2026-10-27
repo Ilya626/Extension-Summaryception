@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.17**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.18**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 Summaryception keeps recent chat verbatim and replaces older context with layered memories. **This fork puts more emphasis on concrete RP details, traceable sources and player control.** Its stock prompts ask to preserve who did what, meaningful dialogue, objects, quantities, locations, knowledge boundaries and unresolved consequences. Summarization remains lossy; no prompt can guarantee that every detail survives.
 
@@ -104,6 +104,12 @@ Manual edits, Regenerate and Refine in deeper layers replace the compression sou
 
 The interface and stock prompts are English. World Info uses ST's native trigger scan on the selected passage and prior memory, including recursion. Activated entries from all WI positions are gathered into a labelled **reference block** in the summary request, rather than inserted at their ordinary chat positions. Lore helps interpret events; it is not evidence that an event happened or that a character knows a fact. Temporary scan state, including Author's Note and WI timers, is restored afterward.
 
+**World Info for Summarization > Maximum WI** limits that block to a percentage of **Source Tokens per Summary**. The default is **20%: 4,800 WI tokens with a 24,000-token source budget**. Changing the source budget updates the WI allowance automatically. The allowance includes WI labels and its reference instructions, measured through ST's active tokenizer; it is separate from the source budget and is not a check against the selected API's full context window.
+
+Scanning starts with the newest **selected source message**, expands toward older selected messages, and considers prior memory last. Each growing window uses the native scanner, including matching across messages, recursion, probability, inclusion groups and native per-scan budgets. Whole entries fill the buffer in that order, deduplicated by book and entry ID. Entries that do not fit are omitted, not cut mid-text; smaller later entries can still fit. A nonblocking warning reports partial WI inclusion. Source membership and message visibility do not change because a lore entry was omitted. Layer transfers scan their archived source-summary texts newest first; Regenerate and Refine use their saved source messages. This does not pull live messages from the blind zone into a new batch.
+
+Uncheck **Include triggered World Info in summarizer requests** to skip scanning entirely. The limit field becomes grey and disabled; its value is retained. Ordinary chat World Info settings are independent.
+
 The settings header shows the running script version. A persistent status above Snippet Browser shows preparation, World Info scanning, API waiting, saving and the actual failure message. Each model call is attempted once, without automatic retries; a saved batch can trigger additional calls for layer transfers. Stop cancels the active request; token planning checks cancellation between exchanges. Switching chats also cancels the old operation.
 
 **Advanced Settings > Summarizer Connection > Streaming responses** selects one response mode for Default, Connection Profile, OpenAI Compatible and Ollama. It applies to new summaries, Regenerate, Refine, layer transfers and Test Connection. Off is the default, including after upgrading a version without this control: wait for one complete response. On requests a stream. This changes only addon requests, leaving ST's chat-streaming settings and connection presets intact. The status line names the selected mode. Native ST streaming adapters may omit usage metadata; those results receive the existing marked token estimate. Horde has no streaming backend and continues to use regular responses.
@@ -140,6 +146,6 @@ Ordinary ST chat uses a different prompt assembly path: **Prefer character instr
 
 Validated against SillyTavern 1.19.0. Preserve chat metadata when transferring memory; Export Memory includes source membership, archived originals and token counts.
 
-The local.17 verification recorded 57 passing behavior tests with substituted ST host APIs and model replies. Desktop/mobile Edge checks used native ST with intercepted model responses; they do not establish real-model summary quality. This distribution contains only extension files, license and documentation. Local tests, screenshots, reports, chat data and credentials are not included.
+The local.18 verification recorded 57 passing behavior tests with substituted ST host APIs and model replies. Desktop/mobile Edge checks used native ST with intercepted model responses; native WI checks also exercised the token cap, recent-source priority, recursion and restored scan state. These checks do not establish real-model summary quality. This distribution contains only extension files, license and documentation. Local tests, screenshots, reports, chat data and credentials are not included.
 
 Based on [Lodactio's Summaryception](https://github.com/Lodactio/Extension-Summaryception). Licensed under AGPL-3.0; see [LICENSE](LICENSE).

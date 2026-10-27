@@ -1,6 +1,16 @@
-# Local version 5.5.4-local.17
+# Local version 5.5.4-local.18
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.18 bounded World Info, newest sources first
+
+World Info for Summarization now has a maximum percentage of Source Tokens per Summary, default 20% (4,800 WI tokens at 24,000 source tokens). The cap counts the full added WI block, including labels and reference instructions, with ST's active tokenizer. Existing enable/disable selection is preserved. Disabling WI skips scanning and greys out the limit without resetting it.
+
+Native scans expand from the newest selected source message toward older messages, then prior memory. Each window retains native matching, recursion, probability, inclusion groups and per-scan budgets. Accepted entries are deduplicated by book/UID, kept whole, and never exceed the addon cap, including entries marked Ignore Budget in a lorebook. Oversized entries are skipped while smaller later ones can still fit. Omission produces a nonblocking warning; it does not change source coverage or ghosting. Author's Note, injected scan flags, WI timers and forced activations are restored between windows and after the operation. Stop is checked between scans and token counts.
+
+The same limit applies to new batches, Regenerate, Refine and layer transfers; transfers receive the archived source-summary units. The cap limits WI only and does not guarantee that sources plus memory, instructions and response reserve fit the API context window.
+
+Verification: the existing 57 behavior tests pass; the existing WI-delivery regression now checks the completed scan rather than assuming one scanner call. No new automated scenarios were added. Native ST 1.19.0/Edge checks verified recent-source priority, recursive activation, all eight WI positions, whole-entry skipping, exact full-block token accounting, restored Author's Note/timers, and the mobile disabled control.
 
 ## local.17 edited-source warnings and PHI audit
 

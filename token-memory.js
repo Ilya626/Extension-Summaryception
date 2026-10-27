@@ -112,7 +112,7 @@ export async function rebalanceMemory(store, settings, summarize, mergeSources, 
                 return [revision.text];
             });
             const prior = store.layers.slice(i + 1).reverse().flatMap(l => (l || []).map(sn => sn.text)).join('\n\n');
-            const result = await summarize(sourceTexts.join('\n\n'), prior);
+            const result = await summarize(sourceTexts.join('\n\n'), prior, null, sourceTexts);
             if (!result) throw new Error('Layer compression failed. Existing memory and source messages were kept.');
             await countOnce(result);
             layer.splice(0, children.length);

@@ -508,3 +508,4 @@
 .sc-source-change-warning > summary { cursor: pointer; color: #dfb56b; }
 .sc-source-change-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 8px; }
 .sc-source-change-item > span { flex: 1 1 180px; }
+#sc_world_info_budget_controls.sc-disabled { opacity: .45; }
