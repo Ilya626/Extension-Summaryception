@@ -22,9 +22,10 @@ import { collectSummaryWorldInfo, attachSummaryWorldInfo, installWorldInfoTracki
 import { planRawContext, blindZoneStart } from './raw-context.js';
 import { layerBudgets, layerTokens, countOnce, archiveL0, preserveSourceRevision, pruneArchive, prepareTokenMemory, rebalanceMemory } from './token-memory.js';
 import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, updateSourceBoundary, collectPassage, resolveSnippetSources, mergedSources, newSnippetSources, formatSourceIndices, captureSourceFingerprints, changedL0Sources } from './summary-sources.js';
+import { installWorldMemoryBridge } from './world-memory-bridge.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.18';
+const RUNTIME_VERSION = '5.5.4-local.19';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -312,9 +313,15 @@ function getChatStore() {
 }
 
 async function saveChatStore() {
-    await SillyTavern.getContext().saveMetadata();
+    const context = SillyTavern.getContext();
+    await context.saveMetadata();
     // Stable source IDs live on the messages, not just in chat metadata.
-    await SillyTavern.getContext().saveChat();
+    await context.saveChat();
+    // Companions schedule their own work; WI generation never holds this save open.
+    if (globalThis.SummaryceptionAPI && context.eventSource) {
+        void context.eventSource.emit('summaryception:memory-changed', { metadata: context.chatMetadata })
+            .catch(error => console.error(LOG_PREFIX, 'Companion notification failed:', error));
+    }
 }
 
 function getPlayerName() {
@@ -2343,6 +2350,9 @@ function showConnectionStatus(type, message) {
     } = SillyTavern.getContext();
 
     getSettings();
+    installWorldMemoryBridge({ getStore: getChatStore, getSettings,
+        isBusy: () => isSummarizing || isChatGenerating(), version: RUNTIME_VERSION,
+        sendRequest: sendSummarizerRequest, sourceId, captureSourceFingerprints, cleanText: cleanSummarizerOutput });
     const native = await import('/script.js');
     if (typeof native.isGenerating === 'function') isChatGenerating = native.isGenerating;
     installWorldInfoTracking();

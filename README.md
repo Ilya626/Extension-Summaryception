@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.18**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.19**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 Summaryception keeps recent chat verbatim and replaces older context with layered memories. **This fork puts more emphasis on concrete RP details, traceable sources and player control.** Its stock prompts ask to preserve who did what, meaningful dialogue, objects, quantities, locations, knowledge boundaries and unresolved consequences. Summarization remains lossy; no prompt can guarantee that every detail survives.
 
@@ -22,6 +22,12 @@ This comparison is against the [upstream version this fork started from](https:/
 | Connections and failures | Already has connection profiles, several backends and retries. | Correct native profile arguments/preset inheritance, an ST-backed Custom API path, one streaming switch, an inactivity timeout, and immediate error reporting without automatic retries. |
 
 The original's layered-memory idea, Snippet Browser, manual editing, Regenerate, injection preview and memory import/export remain. Connection Profiles are an existing feature whose integration is corrected here.
+
+## Optional World Memory companion
+
+[World Memory](https://github.com/Ilya626/Extension-WorldMemory) builds separate character profiles and reference World Info from saved L0 packets. It uses this fork's connection and source links; it does not replace the narrative summaries or edit the character's original lorebook. Install it separately if you want generated WI. [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI) lets its ordinary Russian keywords activate on inflected forms.
+
+Version local.19 exposes `SummaryceptionAPI` protocol 1 (saved-packet snapshot, busy state and summarizer connection) and emits `summaryception:memory-changed` after a save. Original L0 archives now retain source IDs/fingerprints for companions. Without a companion installed, the normal summarization workflow is unchanged. Older deep archives may have only their saved summary text available.
 
 ## How it works in a chat
 

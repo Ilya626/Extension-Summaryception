@@ -95,7 +95,7 @@ export async function sendSummarizerRequest(settings, systemPrompt, userPrompt, 
             result = await sendViaProfile(settings.connectionProfileId, systemPrompt, userPrompt, settings.summarizerResponseLength, signal, streaming, onActivity);
             break;
         case 'ollama':
-            result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal, streaming, onActivity);
+            result = await sendViaOllama(settings.ollamaUrl, settings.ollamaModel, systemPrompt, userPrompt, signal, streaming, onActivity, settings.ollamaMaxTokens);
             break;
         case 'openai':
             result = await sendViaOpenAI(settings.openaiUrl, settings.openaiKey, settings.openaiModel, systemPrompt, userPrompt, settings.openaiMaxTokens, signal, onActivity, streaming);
@@ -348,7 +348,7 @@ async function sendViaProfile(profileId, systemPrompt, userPrompt, responseLengt
  * Send a request to a local Ollama instance using /api/chat.
  * Routes through ST's CORS proxy to avoid browser CORS restrictions.
  */
-async function sendViaOllama(url, model, systemPrompt, userPrompt, signal, streaming, onActivity) {
+async function sendViaOllama(url, model, systemPrompt, userPrompt, signal, streaming, onActivity, responseLength) {
     signal?.throwIfAborted();
     if (!url) {
         throw new ConnectionError(
@@ -384,6 +384,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt, signal, strea
                 stream: streaming,
                 options: {
                     temperature: LLM_DEFAULTS.ollamaTemperature,
+                    ...(responseLength > 0 ? { num_predict: Number(responseLength) } : {}),
                 },
             }),
         });
@@ -402,7 +403,8 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt, signal, strea
                         { role: 'user', content: userPrompt },
                     ],
                     stream: streaming,
-                    options: { temperature: LLM_DEFAULTS.ollamaTemperature },
+                    options: { temperature: LLM_DEFAULTS.ollamaTemperature,
+                        ...(responseLength > 0 ? { num_predict: Number(responseLength) } : {}) },
                 }),
             });
         } catch (directError) {

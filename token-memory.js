@@ -49,6 +49,8 @@ export function archiveL0(store, snippet) {
     snippet.l0SourceIds = [id];
     delete snippet.compressionOverrides;
     store.l0Archive[id] = { text: snippet.text, tokenCount: snippet.tokenCount, tokenCountSource: snippet.tokenCountSource,
+        ...(snippet.sourceMessageIds ? { sourceMessageIds: [...snippet.sourceMessageIds] } : {}),
+        ...(snippet.sourceFingerprints ? { sourceFingerprints: { ...snippet.sourceFingerprints } } : {}),
         ...(snippet.usage ? { usage: structuredClone(snippet.usage) } : {}) };
 }
 

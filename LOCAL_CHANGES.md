@@ -1,6 +1,12 @@
-# Local version 5.5.4-local.18
+# Local version 5.5.4-local.19
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.19 optional World Memory companion
+
+Adds a small `SummaryceptionAPI` protocol 1 for a separate World Memory addon: saved L0 packet/source snapshots, connection reuse and busy state. Saving memory emits a companion notification without waiting for a WI model request. Original L0 archives retain source IDs and fingerprints so the companion can track packets across layer transfers. Existing narration prompts, ghosting and layer-transfer behavior remain unchanged.
+
+The companion is installed separately from [Ilya626/Extension-WorldMemory](https://github.com/Ilya626/Extension-WorldMemory). It creates native World Info profiles from played memory; Russian word forms are handled by [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI). Existing archives without per-packet source links remain usable as summary-only evidence.
 
 ## local.18 bounded World Info, newest sources first
 
