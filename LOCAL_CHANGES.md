@@ -1,6 +1,10 @@
-# Local version 5.5.4-local.20
+# Local version 5.5.4-local.21
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.21 optional addressable history provider
+
+World Memory 0.2 can supply a chronological memory block with selected original exchanges/detailed episodes. Its provider is optional, uses the existing memory insertion position and falls back to saved layers when unavailable. Source snapshots include manual-exclusion state and selected-reply hint metadata, detect missing sources and preserve source order. Fingerprints are captured once per snapshot rather than rescanning the full chat for every packet. Summary generation, ghosting, layers and custom prompts remain unchanged.
 
 ## local.20 continuity summaries instead of response-by-response retellings
 

@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.20 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.21 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -25,7 +25,7 @@ import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, upd
 import { installWorldMemoryBridge } from './world-memory-bridge.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.20';
+const RUNTIME_VERSION = '5.5.4-local.21';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -960,7 +960,7 @@ function updateInjection() {
     try {
         const { setExtensionPrompt, mainApi } = SillyTavern.getContext();
         const settings = getSettings();
-        let text = settings.enabled ? assembleSummaryBlock() : '';
+        let text = settings.enabled ? (globalThis.SummaryceptionAPI?.historyText?.() || assembleSummaryBlock()) : '';
         const beforeChat = settings.injectionPosition === 0;
         if (beforeChat && text) text = `${STORY_MEMORY_START}\n${text}\n${STORY_MEMORY_END}`;
         // CC counts memory at depth 0 before trimming history; the ready event
@@ -2376,7 +2376,7 @@ function showConnectionStatus(type, message) {
     getSettings();
     installWorldMemoryBridge({ getStore: getChatStore, getSettings,
         isBusy: () => isSummarizing || isChatGenerating(), version: RUNTIME_VERSION,
-        sendRequest: sendSummarizerRequest, sourceId, captureSourceFingerprints, cleanText: cleanSummarizerOutput });
+        sendRequest: sendSummarizerRequest, sourceId, captureSourceFingerprints, cleanText: cleanSummarizerOutput, refreshInjection: updateInjection });
     const native = await import('/script.js');
     if (typeof native.isGenerating === 'function') isChatGenerating = native.isGenerating;
     installWorldInfoTracking();

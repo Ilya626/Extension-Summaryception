@@ -1,6 +1,6 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.20**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.21**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
 Summaryception keeps recent chat verbatim and replaces older context with layered memories. **This fork puts more emphasis on concrete RP continuity, traceable sources and player control.** Its stock prompts consolidate related exchanges into compact accounts of consequential changes, preserving relevant names, clues, quantities, knowledge boundaries and unresolved consequences. They avoid response-by-response retelling and repetition, without a fixed output length. Summarization remains lossy; no prompt can guarantee that every detail survives.
 
@@ -25,9 +25,11 @@ The original's layered-memory idea, Snippet Browser, manual editing, Regenerate,
 
 ## Optional World Memory companion
 
-[World Memory](https://github.com/Ilya626/Extension-WorldMemory) builds separate character profiles and reference World Info from saved L0 packets. It uses this fork's connection and source links; it does not replace the narrative summaries or edit the character's original lorebook. Install it separately if you want generated WI. [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI) lets its ordinary Russian keywords activate on inflected forms.
+[World Memory](https://github.com/Ilya626/Extension-WorldMemory) builds separate character profiles and reference World Info from saved L0 packets. It uses this fork's connection and source links; saved narrative summaries and the character's original lorebook stay intact. Install it separately if you want generated WI or its optional selective-history mode. [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI) lets its ordinary Russian keywords activate on inflected forms.
 
 Version local.19 exposes `SummaryceptionAPI` protocol 1 (saved-packet snapshot, busy state and summarizer connection) and emits `summaryception:memory-changed` after a save. Original L0 archives now retain source IDs/fingerprints for companions. Without a companion installed, the normal summarization workflow is unchanged. Older deep archives may have only their saved summary text available.
+
+Local.21 adds an optional companion history provider. World Memory 0.2 can replace the injected memory text with a chronological compact timeline expanded by relevant detailed episodes/original exchanges. This mode is opt-in in World Memory; source archives and summary layers remain saved, insertion settings still apply, and missing/stale companion output falls back to ordinary layers. The snapshot reports manual exclusions and selected-reply hints. Native WI activation remains separate.
 
 ## How it works in a chat
 
