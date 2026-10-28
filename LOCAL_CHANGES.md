@@ -1,6 +1,10 @@
-# Local version 5.5.4-local.19
+# Local version 5.5.4-local.20
 
 Based on [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), commit `6a0afdc`. Distributed at [ilya626/Extension-Summaryception](https://github.com/ilya626/Extension-Summaryception). Manual ST updates use this fork; unattended updates remain disabled.
+
+## local.20 continuity summaries instead of response-by-response retellings
+
+Rebalances the stock Narrative and Game State prompts around consequential changes, causal links and current state. Related actions and dialogue are consolidated by scene or consequence; repetitive descriptions, routine gestures and unchanged status sheets are omitted. Names, exact clues, meaningful physical changes, commitments and knowledge boundaries remain concrete. No fixed output length or compression ratio is imposed. Exact previous stock prompts migrate automatically; edited prompts and saved custom presets are preserved.
 
 ## local.19 optional World Memory companion
 

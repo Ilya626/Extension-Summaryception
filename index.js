@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.4-local.18 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4-local.20 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -25,7 +25,7 @@ import { sourceId, ensureSummarySources, coveredSourceIds, pendingSourceIds, upd
 import { installWorldMemoryBridge } from './world-memory-bridge.js';
 
 const MODULE_NAME = 'summaryception';
-const RUNTIME_VERSION = '5.5.4-local.19';
+const RUNTIME_VERSION = '5.5.4-local.20';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
 
@@ -78,7 +78,7 @@ Exclude anything insubstantial, fluff, atmospheric details, or events already co
 
 Write in short phrases, no more than 20; output must be a single line:`;
 
-const DETAIL_REQUIREMENTS = `Track concrete events and state, not a vague synopsis. Preserve:
+const PREVIOUS_DETAIL_REQUIREMENTS = `Track concrete events and state, not a vague synopsis. Preserve:
 - Who did exactly what, to whom, in what order, with which object, and the immediate result. Keep proper names, aliases, distinctive descriptions, exact numbers, times, quantities, directions, and named places.
 - Physical and spatial details: positions, movement, contact, clothing, equipment, injuries, bodily changes, and relevant sensory observations. Keep explicit details explicit; do not replace them with euphemisms or generic labels.
 - Short exact dialogue when its wording carries a clue, promise, threat, condition, password, boundary, or misunderstanding. Attribute speakers and pronouns unambiguously.
@@ -87,7 +87,7 @@ const DETAIL_REQUIREMENTS = `Track concrete events and state, not a vague synops
 Never invent events, motives, player actions, resolutions, or missing details. Do not add commentary, moral judgments, disclaimers, or story continuation.
 Use concise, specific factual clauses. Remove repetition and ornamental prose, not details needed to reconstruct the scene. There is no fixed phrase-count limit. These rules also apply when compressing existing summaries into deeper layers.`;
 
-const DETAIL_PROMPT_HEADER = `<player_name>
+const PREVIOUS_DETAIL_PROMPT_HEADER = `<player_name>
 {{player_name}}
 </player_name>
 <prior_context>
@@ -98,9 +98,31 @@ const DETAIL_PROMPT_HEADER = `<player_name>
 </passage_in_question>
 Record the new information in passage_in_question that is not already present in prior_context. Retain enough context to identify actors and changes. If prior_context is empty, establish the scene concretely. Second-person 'you' refers to the named player; use that name.`;
 
+const PREVIOUS_PROMPT_PRESETS = {
+    narrative: PREVIOUS_DETAIL_PROMPT_HEADER + '\n\n' + PREVIOUS_DETAIL_REQUIREMENTS + '\n\nPreserve the specific actions, exchanges, physical details, emotional evidence, and subtext that make this RP scene distinct. Output only the memory text.',
+    gamestate: PREVIOUS_DETAIL_PROMPT_HEADER + '\n\n' + PREVIOUS_DETAIL_REQUIREMENTS + '\n\nAlso preserve exact inventory, resources, stats, rules, cooldowns, quest stages, map locations, interactables, and changes to world state. Output only the memory text.',
+};
+
+const DETAIL_REQUIREMENTS = `Write compact continuity memory, not a turn-by-turn retelling.
+Combine related actions and dialogue into a connected account of consequential changes: what happened, why it matters, the resulting state, and what remains unresolved. A scene can span many messages; do not give each response its own recap. State each fact once. Omit repeated descriptions, routine gestures, unchanged background and exchanges that add no lasting information.
+Preserve the concrete details needed to continue correctly: who acted, meaningful choices and results, causal order, relevant names, places, times, quantities, objects, injuries, clues, commitments and constraints. Keep physical details when they establish identity, a consequential change or a condition that still matters. Quote only short wording whose exact form matters, such as a password, condition or promise; summarize ordinary dialogue.
+Keep motives, relationship changes and knowledge boundaries when supported. Attribute uncertain claims and private knowledge. Distinguish intention, attempt and permission from completed action; do not invent player choices, success, explanations or missing facts.
+Use prior_context to identify actors and avoid repeating known events; output the new developments, not another copy of prior_context. When the input is earlier summaries, consolidate their overlapping facts and changes by the same rules. Preserve useful specificity without reconstructing every step. Output only the memory, with no commentary or continuation.`;
+
+const DETAIL_PROMPT_HEADER = `<player_name>
+{{player_name}}
+</player_name>
+<prior_context>
+{{context_str}}
+</prior_context>
+<passage_in_question>
+{{story_txt}}
+</passage_in_question>
+Summarize the consequential new developments in passage_in_question for later continuation. If prior_context is empty, briefly establish the scene. Second-person 'you' refers to the named player; use that name.`;
+
 const PROMPT_PRESETS = {
-    narrative: DETAIL_PROMPT_HEADER + '\n\n' + DETAIL_REQUIREMENTS + '\n\nPreserve the specific actions, exchanges, physical details, emotional evidence, and subtext that make this RP scene distinct. Output only the memory text.',
-    gamestate: DETAIL_PROMPT_HEADER + '\n\n' + DETAIL_REQUIREMENTS + '\n\nAlso preserve exact inventory, resources, stats, rules, cooldowns, quest stages, map locations, interactables, and changes to world state. Output only the memory text.',
+    narrative: DETAIL_PROMPT_HEADER + '\n\n' + DETAIL_REQUIREMENTS + '\n\nWrite short connected paragraphs, grouping developments by scene or consequence rather than by input message.',
+    gamestate: DETAIL_PROMPT_HEADER + '\n\n' + DETAIL_REQUIREMENTS + '\n\nAlso retain meaningful changes to inventory, resources, stats, quest stages, locations and world state with their exact values and relevant rules. Consolidate repeated actions; do not reproduce unchanged status sheets.',
     custom: null,
 };
 
@@ -131,10 +153,10 @@ const defaultSettings = Object.freeze({
     summaryCustomLanguage: '',
     injectionRole: 1,
     injectionTemplate: '[Summary of earlier events]\n{{summary}}',
-    promptRevision: 2,
+    promptRevision: 3,
 
     summarizerSystemPrompt:
-        'You are a precise RP continuity archivist. Preserve concrete details and factual distinctions, including when compressing earlier memories. Output only the memory text; no preamble or commentary.',
+        'You summarize roleplay for continuity. Consolidate consequential events and current state into compact memory, preserving the concrete facts needed to continue correctly. Do not transcribe or recap every response. Output only the memory text.',
 
     summarizerUserPrompt: PROMPT_PRESETS.narrative,
 
@@ -255,11 +277,13 @@ function getSettings() {
         settings.ghostAssistantMessages = !settings.disableGhosting;
     }
     if (settings.promptRevision !== defaultSettings.promptRevision) {
-        const stockPrompts = [LEGACY_DEFAULT_USER_PROMPT, LEGACY_PROMPT_PRESETS.narrative, LEGACY_PROMPT_PRESETS.gamestate];
+        const stockPrompts = [LEGACY_DEFAULT_USER_PROMPT, LEGACY_PROMPT_PRESETS.narrative, LEGACY_PROMPT_PRESETS.gamestate,
+            PREVIOUS_PROMPT_PRESETS.narrative, PREVIOUS_PROMPT_PRESETS.gamestate];
         if (stockPrompts.includes(settings.summarizerUserPrompt)) {
             settings.summarizerUserPrompt = settings.promptPreset === 'gamestate' ? PROMPT_PRESETS.gamestate : PROMPT_PRESETS.narrative;
         }
-        if (settings.summarizerSystemPrompt === 'Role: precise narrative-state tracker. Output only the summary line — no preamble, no commentary, no markdown.') {
+        if (['Role: precise narrative-state tracker. Output only the summary line — no preamble, no commentary, no markdown.',
+            'You are a precise RP continuity archivist. Preserve concrete details and factual distinctions, including when compressing earlier memories. Output only the memory text; no preamble or commentary.'].includes(settings.summarizerSystemPrompt)) {
             settings.summarizerSystemPrompt = defaultSettings.summarizerSystemPrompt;
         }
         if (settings.injectionTemplate === '\n\n<auto_injected_historical_context>\n[system guidance: this is a historical summary of messages that occurred prior to the oldest assistant message currently in context for this chat]\n{{summary}}\n</auto_injected_historical_context>\n\n') {

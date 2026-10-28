@@ -1,8 +1,8 @@
 # Summaryception for SillyTavern
 
-Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.19**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
+Maintained fork of [Lodactio/Extension-Summaryception](https://github.com/Lodactio/Extension-Summaryception), based on upstream commit `6a0afdc`. Version **5.5.4-local.20**. Detailed changes: [LOCAL_CHANGES.md](LOCAL_CHANGES.md).
 
-Summaryception keeps recent chat verbatim and replaces older context with layered memories. **This fork puts more emphasis on concrete RP details, traceable sources and player control.** Its stock prompts ask to preserve who did what, meaningful dialogue, objects, quantities, locations, knowledge boundaries and unresolved consequences. Summarization remains lossy; no prompt can guarantee that every detail survives.
+Summaryception keeps recent chat verbatim and replaces older context with layered memories. **This fork puts more emphasis on concrete RP continuity, traceable sources and player control.** Its stock prompts consolidate related exchanges into compact accounts of consequential changes, preserving relevant names, clues, quantities, knowledge boundaries and unresolved consequences. They avoid response-by-response retelling and repetition, without a fixed output length. Summarization remains lossy; no prompt can guarantee that every detail survives.
 
 ## What changes from the original?
 
