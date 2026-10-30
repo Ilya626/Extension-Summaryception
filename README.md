@@ -23,13 +23,13 @@ This comparison is against the [upstream version this fork started from](https:/
 
 The original's layered-memory idea, Snippet Browser, manual editing, Regenerate, injection preview and memory import/export remain. Connection Profiles are an existing feature whose integration is corrected here.
 
-## Optional World Memory companion
+## Other addons and migration
 
-[World Memory](https://github.com/Ilya626/Extension-WorldMemory) builds separate character profiles and reference World Info from saved L0 packets. It uses this fork's connection and source links; saved narrative summaries and the character's original lorebook stay intact. Install it separately if you want generated WI or its optional selective-history mode. [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI) lets its ordinary Russian keywords activate on inflected forms.
+[WorldMemory 0.3.3+](https://github.com/Ilya626/Extension-WorldMemory) is now a **standalone alternative**, with a growing L0 archive, selective history retrieval and a separate generated World Info book. **Do not run current WorldMemory and Summaryception as two active memory owners for the same chat.** To migrate, export your memory and original chat first, install WorldMemory, let it import the archive and disable Summaryception, then inspect the imported L0 archive. [WorldMemory installation guide](https://github.com/Ilya626/Extension-WorldMemory/blob/main/docs/INSTALL_AND_PLAY_RU.md).
 
-Version local.19 exposes `SummaryceptionAPI` protocol 1 (saved-packet snapshot, busy state and summarizer connection) and emits `summaryception:memory-changed` after a save. Original L0 archives now retain source IDs/fingerprints for companions. Without a companion installed, the normal summarization workflow is unchanged. Older deep archives may have only their saved summary text available.
+Keep **Summaryception + [Russian WI Forms](https://github.com/Ilya626/Extension-RussianWI)** if you want this fork's layered memory with Russian native WI keyword inflections. Optional [MarkUps](https://github.com/Ilya626/Extension-MarkUps) supplies visible lists and hidden notes updated through commands in ordinary model replies. Neither addon requires WorldMemory; embeddings are not required for standalone Summaryception.
 
-Local.21 adds an optional companion history provider. World Memory 0.2 can replace the injected memory text with a chronological compact timeline expanded by relevant detailed episodes/original exchanges. This mode is opt-in in World Memory; source archives and summary layers remain saved, insertion settings still apply, and missing/stale companion output falls back to ordinary layers. The snapshot reports manual exclusions and selected-reply hints. Native WI activation remains separate.
+The companion API and history-provider integration in local.19–local.21 were designed for the older WorldMemory 0.2 companion. They remain legacy interfaces in this fork; the current WorldMemory main branch uses its own runtime. The earlier companion setup is not the installation path for current WorldMemory.
 
 ## How it works in a chat
 
